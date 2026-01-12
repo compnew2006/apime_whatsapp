@@ -1,3 +1,5 @@
+[🇺🇸 Read in English](README.en.md)
+
 Api em Go para orquestrar múltiplas instâncias. 
 
 Baseada na biblioteca [WhatsMeow](https://github.com/tulir/whatsmeow) com dashboard e eventos via Webhooks.
