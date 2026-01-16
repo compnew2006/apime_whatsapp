@@ -18,6 +18,7 @@ type Config struct {
 	RateLimit  RateLimitConfig
 	IPRateLimit IPRateLimitConfig
 	WhatsApp   WhatsAppConfig
+	Webhook    WebhookConfig
 }
 
 type StorageConfig struct {
@@ -85,6 +86,9 @@ type WhatsAppConfig struct {
 	SessionDir    string `env:"WHATSAPP_SESSION_DIR" envDefault:"/app/sessions"`
 }
 
+type WebhookConfig struct {
+	Workers int `env:"WEBHOOK_WORKERS" envDefault:"4"`
+}
 
 // Load carrega as configurações da aplicação.
 func Load() Config {

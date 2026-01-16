@@ -87,7 +87,6 @@ func main() {
 		}
 	})
 
-	// Inicializar storage de mídia temporária (TTL de 2 horas)
 	mediaDir := filepath.Join(cfg.WhatsApp.SessionDir, "media")
 	mediaStorage, err := media.NewStorage(mediaDir, 2*time.Hour, logr)
 	if err != nil {
@@ -95,23 +94,19 @@ func main() {
 	}
 	logr.Info("media storage inicializado", zap.String("dir", mediaDir), zap.Duration("ttl", 2*time.Hour))
 
-	// Criar media handler
 	mediaHandler := handler.NewMediaHandler(mediaStorage)
 
-	// Configurar sistema de webhooks
 	logr.Info("inicializando sistema de webhooks")
 	instanceWebhookChecker := &instanceCheckerAdapter{repo: repos.Instance}
 	eventHandler := webhook.NewEventHandler(repos.WebhookQueue, logr, mediaStorage, cfg.App.BaseURL, instanceWebhookChecker)
 	sessionManager.SetEventHandler(eventHandler)
 	logr.Info("event handler configurado")
 
-	// Iniciar worker de webhooks
 	webhookDelivery := delivery.NewDelivery(logr, 3)
-	webhookWorker := webhook.NewWorker(repos.WebhookQueue, repos.Instance, webhookDelivery, logr)
-	go webhookWorker.Start(context.Background())
-	logr.Info("webhook worker iniciado")
+	webhookPool := webhook.NewPool(repos.WebhookQueue, repos.Instance, webhookDelivery, logr, cfg.Webhook.Workers)
+	go webhookPool.Start(context.Background())
+	logr.Info("webhook pool iniciada", zap.Int("workers", cfg.Webhook.Workers))
 
-	// Restaurar todas as sessões que têm arquivo SQLite na inicialização
 	logr.Info("restaurando sessões...")
 	instances, err := instanceService.List(context.Background())
 	if err == nil {
@@ -176,6 +171,7 @@ func main() {
 		HealthHandler:   healthHandler,
 		UserHandler:     userHandler,
 		MediaHandler:    mediaHandler,
+		WebhookPool:     webhookPool,
 		RateLimit:       rateLimitOpts,
 	})
 
@@ -229,6 +225,12 @@ func main() {
 	logr.Info("iniciando shutdown graceful")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+
+	// Encerrar pool de webhooks
+	if webhookPool != nil {
+		webhookPool.Stop()
+		logr.Info("webhook pool encerrada")
+	}
 
 	// Fechar conexão Redis
 	if repos.RedisClient != nil {

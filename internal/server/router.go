@@ -11,6 +11,7 @@ import (
 	"github.com/open-apime/apime/internal/api/middleware"
 	api_token "github.com/open-apime/apime/internal/service/api_token"
 	"github.com/open-apime/apime/internal/storage"
+	"github.com/open-apime/apime/internal/webhook"
 )
 
 type Options struct {
@@ -24,9 +25,10 @@ type Options struct {
 	APITokenHandler *handler.APITokenHandler
 	HealthHandler   *handler.HealthHandler
 	UserHandler     *handler.UserHandler
-	MediaHandler    *handler.MediaHandler // Handler para mídia temporária
-	APITokenService interface{}           // *api_token.Service - usando interface{} para evitar import cycle
-	InstanceRepo    interface{}           // storage.InstanceRepository - interface{} para evitar ciclos
+	MediaHandler    *handler.MediaHandler
+	WebhookPool     *webhook.Pool
+	APITokenService interface{}
+	InstanceRepo    interface{}
 	RateLimit       middleware.RateLimitOption
 }
 
