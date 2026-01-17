@@ -22,6 +22,9 @@ type Instance struct {
 	TokenUpdatedAt *time.Time     `json:"tokenUpdatedAt,omitempty"`
 	Status         InstanceStatus `json:"status"`
 	SessionBlob    []byte         `json:"-"`
+	HistorySyncStatus   HistorySyncStatus `json:"historySyncStatus"`
+	HistorySyncCycleID  string             `json:"historySyncCycleId"`
+	HistorySyncUpdatedAt *time.Time `json:"historySyncUpdatedAt,omitempty"`
 	CreatedAt      time.Time      `json:"createdAt"`
 	UpdatedAt      time.Time      `json:"updatedAt"`
 }
@@ -80,4 +83,33 @@ type DeviceConfig struct {
 	OSName       string    `json:"osName"`
 	CreatedAt    time.Time `json:"createdAt"`
 	UpdatedAt    time.Time `json:"updatedAt"`
+}
+
+type HistorySyncStatus string
+
+const (
+	HistorySyncStatusPending   HistorySyncStatus = "pending"
+	HistorySyncStatusRunning   HistorySyncStatus = "running"
+	HistorySyncStatusCompleted HistorySyncStatus = "completed"
+	HistorySyncStatusFailed    HistorySyncStatus = "failed"
+)
+
+type HistorySyncPayloadStatus string
+
+const (
+	HistorySyncPayloadPending   HistorySyncPayloadStatus = "pending"
+	HistorySyncPayloadProcessing HistorySyncPayloadStatus = "processing"
+	HistorySyncPayloadDone      HistorySyncPayloadStatus = "done"
+	HistorySyncPayloadError     HistorySyncPayloadStatus = "error"
+)
+
+type WhatsappHistorySync struct {
+	ID         string                        `json:"id"`
+	InstanceID string                        `json:"instanceId"`
+	PayloadType string                       `json:"payloadType"`
+	Payload    []byte                        `json:"payload"`
+	CycleID    string                        `json:"cycleId"`
+	Status     HistorySyncPayloadStatus      `json:"status"`
+	CreatedAt  time.Time                     `json:"createdAt"`
+	ProcessedAt *time.Time                   `json:"processedAt"`
 }

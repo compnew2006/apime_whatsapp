@@ -25,16 +25,20 @@ func (r *instanceRepo) Create(ctx context.Context, inst model.Instance) (model.I
 	now := time.Now()
 	inst.CreatedAt = now
 	inst.UpdatedAt = now
+	if inst.HistorySyncStatus == "" {
+		inst.HistorySyncStatus = model.HistorySyncStatusPending
+	}
 
 	query := `
-		INSERT INTO instances (id, name, owner_user_id, status, session_blob, webhook_url, webhook_secret, instance_token_hash, instance_token_updated_at, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO instances (id, name, owner_user_id, status, session_blob, webhook_url, webhook_secret, instance_token_hash, instance_token_updated_at, history_sync_status, history_sync_cycle_id, history_sync_updated_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err := r.db.Conn.ExecContext(ctx, query,
 		inst.ID, inst.Name, inst.OwnerUserID, string(inst.Status), inst.SessionBlob,
 		nullIfEmpty(inst.WebhookURL), nullIfEmpty(inst.WebhookSecret), nullIfEmpty(inst.TokenHash),
-		inst.TokenUpdatedAt, inst.CreatedAt.Format(time.RFC3339), inst.UpdatedAt.Format(time.RFC3339),
+		formatTimePtr(inst.TokenUpdatedAt), string(inst.HistorySyncStatus), nullIfEmpty(inst.HistorySyncCycleID), formatTimePtr(inst.HistorySyncUpdatedAt),
+		inst.CreatedAt.Format(time.RFC3339), inst.UpdatedAt.Format(time.RFC3339),
 	)
 
 	if err != nil {
@@ -46,17 +50,21 @@ func (r *instanceRepo) Create(ctx context.Context, inst model.Instance) (model.I
 
 func (r *instanceRepo) GetByTokenHash(ctx context.Context, tokenHash string) (model.Instance, error) {
 	query := `
-		SELECT id, name, owner_user_id, status, session_blob, COALESCE(webhook_url, ''), COALESCE(webhook_secret, ''), COALESCE(instance_token_hash, ''), instance_token_updated_at, created_at, updated_at
+		SELECT id, name, owner_user_id, status, session_blob, COALESCE(webhook_url, ''), COALESCE(webhook_secret, ''), COALESCE(instance_token_hash, ''), instance_token_updated_at,
+		       history_sync_status, COALESCE(history_sync_cycle_id, ''), history_sync_updated_at, created_at, updated_at
 		FROM instances
 		WHERE instance_token_hash = ?
 	`
 
 	var inst model.Instance
 	var createdAt, updatedAt string
-	var tokenUpdatedAt sql.NullString
+	var tokenUpdatedAt, historySyncUpdatedAt sql.NullString
 
 	err := r.db.Conn.QueryRowContext(ctx, query, tokenHash).Scan(
-		&inst.ID, &inst.Name, &inst.OwnerUserID, &inst.Status, &inst.SessionBlob, &inst.WebhookURL, &inst.WebhookSecret, &inst.TokenHash, &tokenUpdatedAt, &createdAt, &updatedAt,
+		&inst.ID, &inst.Name, &inst.OwnerUserID, &inst.Status, &inst.SessionBlob,
+		&inst.WebhookURL, &inst.WebhookSecret, &inst.TokenHash, &tokenUpdatedAt,
+		&inst.HistorySyncStatus, &inst.HistorySyncCycleID, &historySyncUpdatedAt,
+		&createdAt, &updatedAt,
 	)
 	if err != nil {
 		return model.Instance{}, mapError(err)
@@ -64,26 +72,29 @@ func (r *instanceRepo) GetByTokenHash(ctx context.Context, tokenHash string) (mo
 
 	inst.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
 	inst.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
-	if tokenUpdatedAt.Valid {
-		inst.TokenUpdatedAt = parseTimePtr(tokenUpdatedAt.String)
-	}
+	inst.TokenUpdatedAt = parseTimePtr(tokenUpdatedAt.String)
+	inst.HistorySyncUpdatedAt = parseTimePtr(historySyncUpdatedAt.String)
 
 	return inst, nil
 }
 
 func (r *instanceRepo) GetByID(ctx context.Context, id string) (model.Instance, error) {
 	query := `
-		SELECT id, name, owner_user_id, status, session_blob, COALESCE(webhook_url, ''), COALESCE(webhook_secret, ''), COALESCE(instance_token_hash, ''), instance_token_updated_at, created_at, updated_at
+		SELECT id, name, owner_user_id, status, session_blob, COALESCE(webhook_url, ''), COALESCE(webhook_secret, ''), COALESCE(instance_token_hash, ''), instance_token_updated_at,
+		       history_sync_status, COALESCE(history_sync_cycle_id, ''), history_sync_updated_at, created_at, updated_at
 		FROM instances
 		WHERE id = ?
 	`
 
 	var inst model.Instance
 	var createdAt, updatedAt string
-	var tokenUpdatedAt sql.NullString
+	var tokenUpdatedAt, historySyncUpdatedAt sql.NullString
 
 	err := r.db.Conn.QueryRowContext(ctx, query, id).Scan(
-		&inst.ID, &inst.Name, &inst.OwnerUserID, &inst.Status, &inst.SessionBlob, &inst.WebhookURL, &inst.WebhookSecret, &inst.TokenHash, &tokenUpdatedAt, &createdAt, &updatedAt,
+		&inst.ID, &inst.Name, &inst.OwnerUserID, &inst.Status, &inst.SessionBlob,
+		&inst.WebhookURL, &inst.WebhookSecret, &inst.TokenHash, &tokenUpdatedAt,
+		&inst.HistorySyncStatus, &inst.HistorySyncCycleID, &historySyncUpdatedAt,
+		&createdAt, &updatedAt,
 	)
 	if err != nil {
 		return model.Instance{}, mapError(err)
@@ -91,16 +102,16 @@ func (r *instanceRepo) GetByID(ctx context.Context, id string) (model.Instance, 
 
 	inst.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
 	inst.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
-	if tokenUpdatedAt.Valid {
-		inst.TokenUpdatedAt = parseTimePtr(tokenUpdatedAt.String)
-	}
+	inst.TokenUpdatedAt = parseTimePtr(tokenUpdatedAt.String)
+	inst.HistorySyncUpdatedAt = parseTimePtr(historySyncUpdatedAt.String)
 
 	return inst, nil
 }
 
 func (r *instanceRepo) List(ctx context.Context) ([]model.Instance, error) {
 	query := `
-		SELECT i.id, i.name, i.owner_user_id, COALESCE(u.email, ''), i.status, COALESCE(i.webhook_url, ''), COALESCE(i.webhook_secret, ''), COALESCE(i.instance_token_hash, ''), i.instance_token_updated_at, i.created_at, i.updated_at
+		SELECT i.id, i.name, i.owner_user_id, COALESCE(u.email, ''), i.status, COALESCE(i.webhook_url, ''), COALESCE(i.webhook_secret, ''), COALESCE(i.instance_token_hash, ''), i.instance_token_updated_at,
+		       i.history_sync_status, COALESCE(i.history_sync_cycle_id, ''), i.history_sync_updated_at, i.created_at, i.updated_at
 		FROM instances i
 		LEFT JOIN users u ON i.owner_user_id = u.id
 		ORDER BY i.created_at DESC
@@ -116,19 +127,21 @@ func (r *instanceRepo) List(ctx context.Context) ([]model.Instance, error) {
 	for rows.Next() {
 		var inst model.Instance
 		var createdAt, updatedAt string
-		var tokenUpdatedAt sql.NullString
+		var tokenUpdatedAt, historySyncUpdatedAt sql.NullString
 
 		if err := rows.Scan(
-			&inst.ID, &inst.Name, &inst.OwnerUserID, &inst.OwnerEmail, &inst.Status, &inst.WebhookURL, &inst.WebhookSecret, &inst.TokenHash, &tokenUpdatedAt, &createdAt, &updatedAt,
+			&inst.ID, &inst.Name, &inst.OwnerUserID, &inst.OwnerEmail, &inst.Status,
+			&inst.WebhookURL, &inst.WebhookSecret, &inst.TokenHash, &tokenUpdatedAt,
+			&inst.HistorySyncStatus, &inst.HistorySyncCycleID, &historySyncUpdatedAt,
+			&createdAt, &updatedAt,
 		); err != nil {
 			return nil, err
 		}
 
 		inst.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
 		inst.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
-		if tokenUpdatedAt.Valid {
-			inst.TokenUpdatedAt = parseTimePtr(tokenUpdatedAt.String)
-		}
+		inst.TokenUpdatedAt = parseTimePtr(tokenUpdatedAt.String)
+		inst.HistorySyncUpdatedAt = parseTimePtr(historySyncUpdatedAt.String)
 
 		instances = append(instances, inst)
 	}
@@ -138,7 +151,8 @@ func (r *instanceRepo) List(ctx context.Context) ([]model.Instance, error) {
 
 func (r *instanceRepo) ListByOwner(ctx context.Context, ownerUserID string) ([]model.Instance, error) {
 	query := `
-		SELECT i.id, i.name, i.owner_user_id, COALESCE(u.email, ''), i.status, COALESCE(i.webhook_url, ''), COALESCE(i.webhook_secret, ''), COALESCE(i.instance_token_hash, ''), i.instance_token_updated_at, i.created_at, i.updated_at
+		SELECT i.id, i.name, i.owner_user_id, COALESCE(u.email, ''), i.status, COALESCE(i.webhook_url, ''), COALESCE(i.webhook_secret, ''), COALESCE(i.instance_token_hash, ''), i.instance_token_updated_at,
+		       i.history_sync_status, COALESCE(i.history_sync_cycle_id, ''), i.history_sync_updated_at, i.created_at, i.updated_at
 		FROM instances i
 		LEFT JOIN users u ON i.owner_user_id = u.id
 		WHERE i.owner_user_id = ?
@@ -180,14 +194,16 @@ func (r *instanceRepo) Update(ctx context.Context, inst model.Instance) (model.I
 
 	query := `
 		UPDATE instances
-		SET name = ?, owner_user_id = ?, status = ?, session_blob = ?, webhook_url = ?, webhook_secret = ?, instance_token_hash = ?, instance_token_updated_at = ?, updated_at = ?
+		SET name = ?, owner_user_id = ?, status = ?, session_blob = ?, webhook_url = ?, webhook_secret = ?, instance_token_hash = ?, instance_token_updated_at = ?,
+		    history_sync_status = ?, history_sync_cycle_id = ?, history_sync_updated_at = ?, updated_at = ?
 		WHERE id = ?
 	`
 
 	result, err := r.db.Conn.ExecContext(ctx, query,
 		inst.Name, inst.OwnerUserID, string(inst.Status), inst.SessionBlob,
 		nullIfEmpty(inst.WebhookURL), nullIfEmpty(inst.WebhookSecret), nullIfEmpty(inst.TokenHash),
-		formatTimePtr(inst.TokenUpdatedAt), inst.UpdatedAt.Format(time.RFC3339), inst.ID,
+		formatTimePtr(inst.TokenUpdatedAt), string(inst.HistorySyncStatus), nullIfEmpty(inst.HistorySyncCycleID), formatTimePtr(inst.HistorySyncUpdatedAt),
+		inst.UpdatedAt.Format(time.RFC3339), inst.ID,
 	)
 	if err != nil {
 		return model.Instance{}, err

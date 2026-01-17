@@ -68,7 +68,7 @@ func main() {
 		log.Fatalf("storage: %v", err)
 	}
 
-	sessionManager := whatsmeow.NewManager(logr, cfg.WhatsApp.SessionKeyEnc, cfg.Storage.Driver, sessionDir, repos.DeviceConfig, repos.Instance)
+	sessionManager := whatsmeow.NewManager(logr, cfg.WhatsApp.SessionKeyEnc, cfg.Storage.Driver, sessionDir, repos.DeviceConfig, repos.Instance, repos.HistorySync)
 
 	instanceService := instance.NewServiceWithSessionMessagesAndEventLogs(repos.Instance, repos.Message, repos.EventLog, sessionManager)
 

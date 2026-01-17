@@ -50,11 +50,13 @@ type Manager struct {
 	baseDir          string
 	deviceConfigRepo storage.DeviceConfigRepository
 	instanceRepo     storage.InstanceRepository
+	historySyncRepo  storage.HistorySyncRepository
 	onStatusChange   func(instanceID string, status string)
 	eventHandler     EventHandler
+	syncWorkers      map[string]context.CancelFunc
 }
 
-func NewManager(log *zap.Logger, encKey, storageDriver, baseDir string, deviceConfigRepo storage.DeviceConfigRepository, instanceRepo storage.InstanceRepository) *Manager {
+func NewManager(log *zap.Logger, encKey, storageDriver, baseDir string, deviceConfigRepo storage.DeviceConfigRepository, instanceRepo storage.InstanceRepository, historySyncRepo storage.HistorySyncRepository) *Manager {
 	if baseDir == "" {
 		baseDir = "/app/data/sessions"
 		log.Warn("sessionDir não definido, usando diretório padrão do container", zap.String("dir", baseDir))
@@ -73,6 +75,8 @@ func NewManager(log *zap.Logger, encKey, storageDriver, baseDir string, deviceCo
 		baseDir:          baseDir,
 		deviceConfigRepo: deviceConfigRepo,
 		instanceRepo:     instanceRepo,
+		historySyncRepo:  historySyncRepo,
+		syncWorkers:      make(map[string]context.CancelFunc),
 	}
 }
 
@@ -182,6 +186,8 @@ func (m *Manager) createSession(ctx context.Context, instanceID string, forceRec
 	}
 
 	client := whatsmeow.NewClient(deviceStore, clientLog)
+	client.EnableAutoReconnect = true
+	client.ManualHistorySyncDownload = true
 
 	client.AddEventHandler(func(evt any) {
 		m.handleEvent(instanceID, evt)
@@ -273,6 +279,9 @@ func (m *Manager) monitorQRChannel(instanceID string, qrChan <-chan whatsmeow.QR
 			m.mu.RLock()
 			client, exists := m.clients[instanceID]
 			m.mu.RUnlock()
+
+			// Gerar cycle_id e iniciar worker de sync em background
+			go m.initHistorySyncCycle(instanceID)
 			if exists && client != nil {
 				go func() {
 					for attempt := 1; attempt <= 5; attempt++ {
@@ -778,6 +787,10 @@ type DiagnosticsInfo struct {
 	HasQRCode         bool      `json:"hasQRCode"`
 	LastError         string    `json:"lastError,omitempty"`
 	ClientConnected   bool      `json:"clientConnected"`
+	HistorySyncStatus string    `json:"historySyncStatus,omitempty"`
+	HistorySyncCycleID string   `json:"historySyncCycleId,omitempty"`
+	HistorySyncUpdatedAt *time.Time `json:"historySyncUpdatedAt,omitempty"`
+	PendingPayloads   int       `json:"pendingPayloads"`
 }
 
 // GetDiagnostics retorna informações de diagnóstico sobre uma instância
@@ -820,6 +833,23 @@ func (m *Manager) GetDiagnostics(instanceID string) interface{} {
 				}
 				diag.DevicePushName = deviceStore.PushName
 			}
+		}
+	}
+
+	// Adicionar informações de history sync
+	if m.instanceRepo != nil {
+		ctx := context.Background()
+		if inst, err := m.instanceRepo.GetByID(ctx, instanceID); err == nil {
+			diag.HistorySyncStatus = string(inst.HistorySyncStatus)
+			diag.HistorySyncCycleID = inst.HistorySyncCycleID
+			diag.HistorySyncUpdatedAt = inst.HistorySyncUpdatedAt
+		}
+	}
+
+	if m.historySyncRepo != nil {
+		ctx := context.Background()
+		if payloads, err := m.historySyncRepo.ListPendingByInstance(ctx, instanceID); err == nil {
+			diag.PendingPayloads = len(payloads)
 		}
 	}
 
@@ -957,8 +987,10 @@ func (m *Manager) handleEvent(instanceID string, evt any) {
 
 	switch v := evt.(type) {
 	case *events.Connected:
-		m.log.Info("instância conectada com sucesso", zap.String("instance_id", instanceID))
-		// Enviar presence após conexão
+		m.log.Info("instância conectada - dispositivo liberado, sincronizando dados essenciais em background", 
+			zap.String("instance_id", instanceID))
+		
+		// Enviar presence em background
 		m.mu.RLock()
 		client, exists := m.clients[instanceID]
 		m.mu.RUnlock()
@@ -974,12 +1006,13 @@ func (m *Manager) handleEvent(instanceID string, evt any) {
 							m.log.Debug("PushName não sincronizado no Connected", zap.String("instance_id", instanceID))
 						}
 					} else {
-						m.log.Info("presence enviado após conexão", zap.String("instance_id", instanceID))
+						m.log.Info("presence enviado - instância totalmente ativa", zap.String("instance_id", instanceID))
 						return
 					}
 				}
 			}()
 		}
+		
 		if callback != nil {
 			callback(instanceID, "active")
 		}
@@ -1053,6 +1086,22 @@ func (m *Manager) handleEvent(instanceID string, evt any) {
 		m.updateInstanceStatus(instanceID, model.InstanceStatusError)
 		if callback != nil {
 			callback(instanceID, "error")
+		}
+	case *events.HistorySync:
+		m.log.Info("history sync recebido",
+			zap.String("instance_id", instanceID),
+			zap.Int("conversations", len(v.Data.GetConversations())),
+		)
+	case *events.AppStateSyncComplete:
+		m.log.Debug("app state sync completo",
+			zap.String("instance_id", instanceID),
+			zap.String("name", string(v.Name)),
+		)
+		
+		// Quando critical_block sync completa, a instância está pronta para uso
+		if v.Name == "critical_block" {
+			m.log.Info("sincronização crítica concluída - instância pronta para receber mensagens",
+				zap.String("instance_id", instanceID))
 		}
 	default:
 		// Outros eventos não tratados explicitamente

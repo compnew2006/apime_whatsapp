@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/open-apime/apime/internal/storage/model"
 )
@@ -53,4 +54,12 @@ type APITokenRepository interface {
 type DeviceConfigRepository interface {
 	Get(ctx context.Context) (model.DeviceConfig, error)
 	Update(ctx context.Context, config model.DeviceConfig) (model.DeviceConfig, error)
+}
+
+type HistorySyncRepository interface {
+	Create(ctx context.Context, payload model.WhatsappHistorySync) (model.WhatsappHistorySync, error)
+	ListPendingByInstance(ctx context.Context, instanceID string) ([]model.WhatsappHistorySync, error)
+	ListPendingByCycle(ctx context.Context, instanceID, cycleID string) ([]model.WhatsappHistorySync, error)
+	UpdateStatus(ctx context.Context, id string, status model.HistorySyncPayloadStatus, processedAt *time.Time) error
+	DeleteByInstance(ctx context.Context, instanceID string) error
 }
