@@ -237,6 +237,9 @@ func (h *EventHandler) normalizeEvent(ctx context.Context, instanceID string, cl
 		result["type"] = "connected"
 	case *events.Disconnected:
 		result["type"] = "disconnected"
+	case *events.LoggedOut:
+		result["type"] = "disconnected"
+		result["reason"] = evt.Reason.String()
 	default:
 		result["type"] = "unknown"
 		result["eventType"] = fmt.Sprintf("%T", evt)

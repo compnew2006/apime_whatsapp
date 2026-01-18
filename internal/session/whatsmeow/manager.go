@@ -41,22 +41,24 @@ type EventHandler interface {
 }
 
 type Manager struct {
-	clients          map[string]*whatsmeow.Client
-	currentQRs       map[string]string
-	qrContexts       map[string]context.CancelFunc
-	pairingSuccess   map[string]time.Time
-	mu               sync.RWMutex
-	log              *zap.Logger
-	encKey           string
-	storageDriver    string
-	baseDir          string
-	pgConnString     string
-	deviceConfigRepo storage.DeviceConfigRepository
-	instanceRepo     storage.InstanceRepository
-	historySyncRepo  storage.HistorySyncRepository
-	onStatusChange   func(instanceID string, status string)
-	eventHandler     EventHandler
-	syncWorkers      map[string]context.CancelFunc
+	clients            map[string]*whatsmeow.Client
+	currentQRs         map[string]string
+	qrContexts         map[string]context.CancelFunc
+	pairingSuccess     map[string]time.Time
+	mu                 sync.RWMutex
+	log                *zap.Logger
+	encKey             string
+	storageDriver      string
+	baseDir            string
+	pgConnString       string
+	deviceConfigRepo   storage.DeviceConfigRepository
+	instanceRepo       storage.InstanceRepository
+	historySyncRepo    storage.HistorySyncRepository
+	onStatusChange     func(instanceID string, status string)
+	eventHandler       EventHandler
+	syncWorkers        map[string]context.CancelFunc
+	disconnectDebounce map[string]*time.Timer
+	expectedDisconnect map[string]bool
 }
 
 func NewManager(log *zap.Logger, encKey, storageDriver, baseDir, pgConnString string, deviceConfigRepo storage.DeviceConfigRepository, instanceRepo storage.InstanceRepository, historySyncRepo storage.HistorySyncRepository) *Manager {
@@ -71,19 +73,21 @@ func NewManager(log *zap.Logger, encKey, storageDriver, baseDir, pgConnString st
 	}
 
 	return &Manager{
-		clients:          make(map[string]*whatsmeow.Client),
-		currentQRs:       make(map[string]string),
-		qrContexts:       make(map[string]context.CancelFunc),
-		pairingSuccess:   make(map[string]time.Time),
-		log:              log,
-		encKey:           encKey,
-		storageDriver:    storageDriver,
-		baseDir:          baseDir,
-		pgConnString:     pgConnString,
-		deviceConfigRepo: deviceConfigRepo,
-		instanceRepo:     instanceRepo,
-		historySyncRepo:  historySyncRepo,
-		syncWorkers:      make(map[string]context.CancelFunc),
+		clients:            make(map[string]*whatsmeow.Client),
+		currentQRs:         make(map[string]string),
+		qrContexts:         make(map[string]context.CancelFunc),
+		pairingSuccess:     make(map[string]time.Time),
+		log:                log,
+		encKey:             encKey,
+		storageDriver:      storageDriver,
+		baseDir:            baseDir,
+		pgConnString:       pgConnString,
+		deviceConfigRepo:   deviceConfigRepo,
+		instanceRepo:       instanceRepo,
+		historySyncRepo:    historySyncRepo,
+		syncWorkers:        make(map[string]context.CancelFunc),
+		disconnectDebounce: make(map[string]*time.Timer),
+		expectedDisconnect: make(map[string]bool),
 	}
 }
 
@@ -559,6 +563,7 @@ func (m *Manager) DeleteSession(instanceID string) error {
 	var client *whatsmeow.Client
 
 	m.mu.Lock()
+	m.expectedDisconnect[instanceID] = true // Marca como intencional para evitar debounce
 	if cancel, exists := m.qrContexts[instanceID]; exists {
 		cancel()
 		delete(m.qrContexts, instanceID)
@@ -1234,23 +1239,18 @@ func (m *Manager) handleEvent(instanceID string, evt any) {
 	m.mu.RLock()
 	callback := m.onStatusChange
 	handler := m.eventHandler
+	client, exists := m.clients[instanceID]
 	m.mu.RUnlock()
 
-	// Enviar evento para o webhook handler se configurado
+	instanceJID := ""
+	if exists && client != nil && client.Store != nil && client.Store.ID != nil {
+		instanceJID = client.Store.ID.String()
+	}
+
 	if handler != nil {
-		// Obter JID da instância conectada
-		m.mu.RLock()
-		client, exists := m.clients[instanceID]
-		m.mu.RUnlock()
-
-		instanceJID := ""
-		if exists && client != nil && client.Store != nil && client.Store.ID != nil {
-			instanceJID = client.Store.ID.String()
-		}
-
-		// Enviar apenas eventos relevantes para webhooks (mensagens, recibos, presença)
+	
 		switch evt.(type) {
-		case *events.Message, *events.Receipt, *events.Presence, *events.Connected, *events.Disconnected:
+		case *events.Message, *events.Receipt, *events.Presence:
 			go handler.Handle(context.Background(), instanceID, instanceJID, client, evt)
 		}
 	}
@@ -1260,7 +1260,21 @@ func (m *Manager) handleEvent(instanceID string, evt any) {
 		m.log.Info("instância conectada - dispositivo liberado, sincronizando dados essenciais em background",
 			zap.String("instance_id", instanceID))
 
-		// Enviar presence em background
+		m.mu.Lock()
+		if timer, exists := m.disconnectDebounce[instanceID]; exists {
+			timer.Stop()
+			delete(m.disconnectDebounce, instanceID)
+			m.log.Info("instabilidade de rede detectada e ignorada (conectou dentro do grace period)", zap.String("instance_id", instanceID))
+			m.mu.Unlock()
+			return
+		}
+		m.expectedDisconnect[instanceID] = false
+		m.mu.Unlock()
+
+		if handler != nil {
+			go handler.Handle(context.Background(), instanceID, instanceJID, client, v)
+		}
+
 		m.mu.RLock()
 		client, exists := m.clients[instanceID]
 		m.mu.RUnlock()
@@ -1295,6 +1309,41 @@ func (m *Manager) handleEvent(instanceID string, evt any) {
 			callback(instanceID, "active")
 		}
 	case *events.Disconnected:
+		m.mu.Lock()
+		if m.expectedDisconnect[instanceID] {
+			m.log.Info("desconexão intencional processada imediatamente", zap.String("instance_id", instanceID))
+			m.expectedDisconnect[instanceID] = false
+			m.mu.Unlock()
+
+			if handler != nil {
+				go handler.Handle(context.Background(), instanceID, instanceJID, client, v)
+			}
+		} else {
+			m.log.Info("instância desconectada, iniciando debounce", zap.String("instance_id", instanceID))
+			if t, exists := m.disconnectDebounce[instanceID]; exists {
+				t.Stop()
+			}
+
+			timer := time.AfterFunc(5*time.Second, func() {
+				m.mu.Lock()
+				delete(m.disconnectDebounce, instanceID)
+				m.mu.Unlock()
+
+				m.log.Warn("debounce expirado, confirmando desconexão", zap.String("instance_id", instanceID))
+				m.updateInstanceStatus(instanceID, model.InstanceStatusError)
+				if callback != nil {
+					callback(instanceID, "error")
+				}
+
+				if handler != nil {
+					go handler.Handle(context.Background(), instanceID, instanceJID, client, v)
+				}
+			})
+			m.disconnectDebounce[instanceID] = timer
+			m.mu.Unlock()
+			return
+		}
+
 		m.log.Warn("instância desconectada",
 			zap.String("instance_id", instanceID),
 		)
@@ -1303,10 +1352,22 @@ func (m *Manager) handleEvent(instanceID string, evt any) {
 			callback(instanceID, "error")
 		}
 	case *events.LoggedOut:
+		m.mu.Lock()
+		if timer, exists := m.disconnectDebounce[instanceID]; exists {
+			timer.Stop()
+			delete(m.disconnectDebounce, instanceID)
+		}
+		m.mu.Unlock()
+
 		m.log.Warn("instância deslogada",
 			zap.String("instance_id", instanceID),
 			zap.String("reason", v.Reason.String()),
 		)
+
+		if handler != nil {
+			go handler.Handle(context.Background(), instanceID, instanceJID, client, v)
+		}
+
 		m.updateInstanceStatus(instanceID, model.InstanceStatusDisconnected)
 		if callback != nil {
 			callback(instanceID, "disconnected")
