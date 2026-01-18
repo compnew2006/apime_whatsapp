@@ -1248,7 +1248,7 @@ func (m *Manager) handleEvent(instanceID string, evt any) {
 	}
 
 	if handler != nil {
-	
+
 		switch evt.(type) {
 		case *events.Message, *events.Receipt, *events.Presence:
 			go handler.Handle(context.Background(), instanceID, instanceJID, client, evt)
@@ -1372,6 +1372,11 @@ func (m *Manager) handleEvent(instanceID string, evt any) {
 		if callback != nil {
 			callback(instanceID, "disconnected")
 		}
+
+		go func() {
+			time.Sleep(1 * time.Second)
+			m.DeleteSession(instanceID)
+		}()
 	case *events.TemporaryBan:
 		m.log.Error("instância temporariamente banida pelo WhatsApp",
 			zap.String("instance_id", instanceID),
