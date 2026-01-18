@@ -1,5 +1,25 @@
 # Changelog
 
+## [v1.0.6] - 2026-01-18
+### Adicionado
+- Implementação de **Smart Debounce** para estabilização de conexão: desconexões acidentais são filtradas por 5 segundos antes de disparar webhook, enquanto desconexões intencionais (API/Logout) são notificadas imediatamente.
+
+### Corrigido
+- Evento `LoggedOut` agora dispara webhook corretamente com status `disconnected`, garantindo notificação imediata ao sair pelo celular.
+- Endpoints de operação da instância (`/qr` e `/disconnect`) agora aceitam autenticação via Token de Instância (API Key) além do JWT, facilitando integrações externas.
+
+### Atualizado
+- Documentação do Dashboard (`docs.tmpl`) revisada para exibir exemplos de cURL com `$INSTANCE_TOKEN` nas operações de conexão.
+- Guia do Usuário (`docs/users.md`) atualizado para esclarecer o escopo de uso dos tokens de instância.
+
+## [v1.0.5] - 2026-01-18
+### Corrigido
+- Isolamento das sessões WhatsMeow em PostgreSQL: cada instância agora cria um `deviceStore` dedicado, tem o JID salvo no banco e as operações de restauração/remoção usam esse identificador exclusivo.
+
+### Adicionado
+- Campo `whatsapp_jid` na tabela `instances`, com migrações para PostgreSQL (`000010_whatsapp_jid`) e SQLite (`000003_whatsapp_jid`), além do suporte correspondente nos repositórios e no modelo `Instance`.
+
+
 ## [v1.0.4] - 2026-01-17
 ### Adicionado
 - Suporte a `DASHBOARD_TIMEZONE`: a variável de ambiente agora é lida pelo backend, propagada aos templates e exposta via JS para garantir que todas as datas/hora do dashboard sigam o fuso configurado.
