@@ -14,6 +14,7 @@ import (
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
+	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/open-apime/apime/internal/storage"
@@ -76,21 +77,27 @@ type Service struct {
 	repo         storage.MessageRepository
 	sessionMgr   SessionManager
 	instanceRepo storage.InstanceRepository
+	log          *zap.Logger
 }
 
 type SessionManager interface {
 	GetClient(instanceID string) (*whatsmeow.Client, error)
+	IsSessionReady(instanceID string) bool
 }
 
-func NewService(repo storage.MessageRepository) *Service {
-	return &Service{repo: repo}
+func NewService(repo storage.MessageRepository, log *zap.Logger) *Service {
+	return &Service{
+		repo: repo,
+		log:  log,
+	}
 }
 
-func NewServiceWithSession(repo storage.MessageRepository, sessionMgr SessionManager, instanceRepo storage.InstanceRepository) *Service {
+func NewServiceWithSession(repo storage.MessageRepository, sessionMgr SessionManager, instanceRepo storage.InstanceRepository, log *zap.Logger) *Service {
 	return &Service{
 		repo:         repo,
 		sessionMgr:   sessionMgr,
 		instanceRepo: instanceRepo,
+		log:          log,
 	}
 }
 
@@ -164,6 +171,27 @@ func (s *Service) Send(ctx context.Context, input SendInput) (model.Message, err
 			_, _ = s.instanceRepo.Update(ctxUpdate, instToUpdate)
 		}
 		return model.Message{}, ErrInstanceNotConnected
+	}
+
+	// Aguardar sessão ficar pronta (sincronização de chaves E2E)
+	// Timeout de 10 segundos
+	readyStart := time.Now()
+	isReady := false
+	for time.Since(readyStart) < 10*time.Second {
+		if s.sessionMgr.IsSessionReady(input.InstanceID) {
+			isReady = true
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	if !isReady {
+		// Logar warning mas tentar enviar mesmo assim (melhor que falhar)
+		// Em alguns casos o evento critical_block pode não vir ou vir diferente
+		s.log.Warn("Sessão não reportou pronta após timeout, enviando mensagem mesmo assim",
+			zap.String("instance_id", input.InstanceID),
+			zap.Duration("timeout", 10*time.Second),
+		)
 	}
 
 	normalizedTo := normalizeJID(input.To)

@@ -3,10 +3,11 @@
 ## [v1.0.7] - 2026-01-19
 ### Corrigido
 - **Race condition no pareamento**: salvamento do JID agora é síncrono, garantindo que a sessão esteja persistida antes de liberar para uso.
-- Mensagens ficando em "Aguardando" após conectar instância: adicionado controle `sessionReady` que indica quando a sessão está pronta para enviar mensagens (após presence enviado).
+- **Mensagens "Aguardando"**: A API de envio de mensagens agora aguarda inteligentemente (até 10s) que a sincronização das chaves de criptografia (prekeys) esteja concluída antes de despachar a mensagem. Isso evita que as primeiras mensagens fiquem pendentes no destinatário.
 
 ### Adicionado
-- Método `IsSessionReady()` no Manager para verificar se a sessão está completamente pronta para operações de envio.
+- Método `IsSessionReady()` no Manager para verificar se a sessão está completamente pronta.
+- Lógica de polling no `MessageService` para garantir estabilidade no envio inicial.
 
 ### Internals
 - Limpeza automática do estado `sessionReady` e `pairingSuccess` ao deletar sessão.

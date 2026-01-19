@@ -129,7 +129,6 @@ func (m *Manager) GetSessionStorageInfo(instanceID string) SessionStorageInfo {
 	}
 }
 
-
 func (m *Manager) IsSessionReady(instanceID string) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -340,7 +339,6 @@ func (m *Manager) monitorQRChannel(instanceID string, client *whatsmeow.Client, 
 			m.pairingSuccess[instanceID] = time.Now()
 			m.mu.Unlock()
 
-			
 			if client != nil && client.Store != nil && client.Store.ID != nil {
 				if m.instanceRepo != nil {
 					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -388,7 +386,7 @@ func (m *Manager) monitorQRChannel(instanceID string, client *whatsmeow.Client, 
 							}
 						} else {
 							m.log.Info("presence enviado com sucesso", zap.String("instance_id", instanceID))
-							
+
 							m.mu.Lock()
 							m.sessionReady[instanceID] = true
 							m.mu.Unlock()
@@ -396,7 +394,7 @@ func (m *Manager) monitorQRChannel(instanceID string, client *whatsmeow.Client, 
 							return
 						}
 					}
-					
+
 					m.mu.Lock()
 					m.sessionReady[instanceID] = true
 					m.mu.Unlock()
@@ -980,7 +978,7 @@ func (m *Manager) restoreSessionIfExists(ctx context.Context, instanceID string)
 				return
 			}
 		}
-		
+
 		m.mu.Lock()
 		m.sessionReady[instanceID] = true
 		m.mu.Unlock()
@@ -1321,14 +1319,14 @@ func (m *Manager) handleEvent(instanceID string, evt any) {
 						}
 					} else {
 						m.log.Info("presence enviado - instância totalmente ativa", zap.String("instance_id", instanceID))
-						
+
 						m.mu.Lock()
 						m.sessionReady[instanceID] = true
 						m.mu.Unlock()
 						return
 					}
 				}
-				
+
 				m.mu.Lock()
 				m.sessionReady[instanceID] = true
 				m.mu.Unlock()
@@ -1472,9 +1470,14 @@ func (m *Manager) handleEvent(instanceID string, evt any) {
 			zap.String("name", string(v.Name)),
 		)
 
-		// Quando critical_block sync completa, a instância está pronta para uso
 		if v.Name == "critical_block" {
-			m.log.Info("sincronização crítica concluída - instância pronta para receber mensagens",
+			m.log.Info("sincronização crítica concluída - prekeys E2E prontas",
+				zap.String("instance_id", instanceID))
+
+			m.mu.Lock()
+			m.sessionReady[instanceID] = true
+			m.mu.Unlock()
+			m.log.Info("sessão pronta para enviar mensagens (critical_block sync completo)",
 				zap.String("instance_id", instanceID))
 		}
 	default:
