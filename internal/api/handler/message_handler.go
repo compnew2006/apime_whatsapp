@@ -5,77 +5,12 @@ import (
 	"io"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/open-apime/apime/internal/pkg/response"
 	messageSvc "github.com/open-apime/apime/internal/service/message"
 )
-
-// normalizeJID normaliza um JID, adicionando @s.whatsapp.net apenas para números de telefone
-// Grupos devem ser passados com JID completo (ex: 120363123456789012@g.us)
-// Para números brasileiros, remove o 9º dígito (9) de números de celular se presente
-func normalizeJID(jidStr string) string {
-	jidStr = strings.TrimSpace(jidStr)
-
-	// Se for grupo ou outro tipo que não seja @s.whatsapp.net, retorna como está
-	if strings.Contains(jidStr, "@") {
-		// Se for @s.whatsapp.net, extrai o número e normaliza
-		if strings.HasSuffix(jidStr, "@s.whatsapp.net") {
-			phone := strings.TrimSuffix(jidStr, "@s.whatsapp.net")
-			normalized := normalizeBrazilianPhone(phone)
-			return normalized + "@s.whatsapp.net"
-		}
-		// Outros tipos (@g.us, etc.) retorna como está
-		return jidStr
-	}
-
-	// Normalizar número brasileiro: remover o 9º dígito de celulares
-	normalized := normalizeBrazilianPhone(jidStr)
-
-	return normalized + "@s.whatsapp.net"
-}
-
-// normalizeBrazilianPhone normaliza números de telefone brasileiros
-// Remove o 9º dígito (9) de números de celular se presente
-// Formato esperado: 55 + DDD (2 dígitos) + número (8 ou 9 dígitos)
-// Exemplo: 5511999999999 -> 551199999999 (remove o 9º dígito)
-func normalizeBrazilianPhone(phone string) string {
-	// Remove caracteres não numéricos
-	digits := strings.Map(func(r rune) rune {
-		if r >= '0' && r <= '9' {
-			return r
-		}
-		return -1
-	}, phone)
-
-	// Verifica se é número brasileiro (começa com 55)
-	if len(digits) < 4 || !strings.HasPrefix(digits, "55") {
-		return phone // Não é brasileiro, retorna original
-	}
-
-	// Verifica se tem pelo menos DDD + 9 dígitos (55 + 2 + 9 = 13 dígitos)
-	if len(digits) < 13 {
-		return phone // Muito curto, retorna original
-	}
-
-	// Extrai: 55 (país) + DDD (2 dígitos) + número (resto)
-	// Exemplo: 5511999999999 -> país=55, ddd=11, numero=999999999
-	country := digits[0:2]  // 55
-	areaCode := digits[2:4] // DDD (11-99)
-	number := digits[4:]    // Número restante
-
-	// Se o número tem 9 dígitos e começa com 9, remove o primeiro 9
-	// Isso normaliza para o formato antigo que o WhatsApp pode esperar
-	if len(number) == 9 && number[0] == '9' {
-		// Remove o primeiro dígito (9)
-		normalizedNumber := number[1:]
-		return country + areaCode + normalizedNumber
-	}
-
-	return phone // Não precisa normalizar
-}
 
 type MessageHandler struct {
 	service *messageSvc.Service
@@ -149,12 +84,12 @@ func (h *MessageHandler) sendText(c *gin.Context) {
 		return
 	}
 
-	// Normalizar JID (adiciona @s.whatsapp.net se for apenas número)
-	normalizedTo := normalizeJID(req.To)
+	// Passar o JID/Phone cru para o service resolver dinamicamente via IsOnWhatsApp
+	// normalizeJID foi movido/refatorado para dentro do service
 
 	msg, err := h.service.Send(c.Request.Context(), messageSvc.SendInput{
 		InstanceID: instanceID,
-		To:         normalizedTo,
+		To:         req.To,
 		Type:       "text",
 		Text:       req.Text,
 	})
@@ -218,12 +153,11 @@ func (h *MessageHandler) sendMedia(c *gin.Context) {
 		return
 	}
 
-	// Normalizar JID (adiciona @s.whatsapp.net se for apenas número)
-	normalizedTo := normalizeJID(to)
+	// Passar o JID/Phone cru para o service resolver dinamicamente via IsOnWhatsApp
 
 	msg, err := h.service.Send(c.Request.Context(), messageSvc.SendInput{
 		InstanceID: instanceID,
-		To:         normalizedTo,
+		To:         to,
 		Type:       mediaType,
 		MediaData:  fileData,
 		MediaType:  file.Header.Get("Content-Type"),
@@ -280,8 +214,7 @@ func (h *MessageHandler) sendAudio(c *gin.Context) {
 		return
 	}
 
-	// Normalizar JID (adiciona @s.whatsapp.net se for apenas número)
-	normalizedTo := normalizeJID(to)
+	// Passar o JID/Phone cru para o service resolver dinamicamente via IsOnWhatsApp
 
 	// Extrair duração (seconds)
 	secondsStr := c.PostForm("seconds")
@@ -295,7 +228,7 @@ func (h *MessageHandler) sendAudio(c *gin.Context) {
 
 	msg, err := h.service.Send(c.Request.Context(), messageSvc.SendInput{
 		InstanceID: instanceID,
-		To:         normalizedTo,
+		To:         to,
 		Type:       "audio",
 		MediaData:  fileData,
 		MediaType:  mediaType,
@@ -360,12 +293,11 @@ func (h *MessageHandler) sendDocument(c *gin.Context) {
 		return
 	}
 
-	// Normalizar JID (adiciona @s.whatsapp.net se for apenas número)
-	normalizedTo := normalizeJID(to)
+	// Passar o JID/Phone cru para o service resolver dinamicamente via IsOnWhatsApp
 
 	msg, err := h.service.Send(c.Request.Context(), messageSvc.SendInput{
 		InstanceID: instanceID,
-		To:         normalizedTo,
+		To:         to,
 		Type:       "document",
 		MediaData:  fileData,
 		MediaType:  file.Header.Get("Content-Type"),

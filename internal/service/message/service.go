@@ -21,51 +21,6 @@ import (
 	"github.com/open-apime/apime/internal/storage/model"
 )
 
-func normalizeJID(jidStr string) string {
-	jidStr = strings.TrimSpace(jidStr)
-
-	if strings.Contains(jidStr, "@") {
-		if strings.HasSuffix(jidStr, "@s.whatsapp.net") {
-			phone := strings.TrimSuffix(jidStr, "@s.whatsapp.net")
-			normalized := normalizeBrazilianPhone(phone)
-			return normalized + "@s.whatsapp.net"
-		}
-		return jidStr
-	}
-
-	normalized := normalizeBrazilianPhone(jidStr)
-
-	return normalized + "@s.whatsapp.net"
-}
-
-func normalizeBrazilianPhone(phone string) string {
-	digits := strings.Map(func(r rune) rune {
-		if r >= '0' && r <= '9' {
-			return r
-		}
-		return -1
-	}, phone)
-
-	if len(digits) < 4 || !strings.HasPrefix(digits, "55") {
-		return phone
-	}
-
-	if len(digits) < 13 {
-		return phone
-	}
-
-	country := digits[0:2]
-	areaCode := digits[2:4]
-	number := digits[4:]
-
-	if len(number) == 9 && number[0] == '9' {
-		normalizedNumber := number[1:]
-		return country + areaCode + normalizedNumber
-	}
-
-	return phone
-}
-
 var (
 	ErrInvalidPayload       = errors.New("payload inválido")
 	ErrInstanceNotConnected = errors.New("instância não conectada")
@@ -173,7 +128,6 @@ func (s *Service) Send(ctx context.Context, input SendInput) (model.Message, err
 		return model.Message{}, ErrInstanceNotConnected
 	}
 
-
 	readyStart := time.Now()
 	isReady := false
 	poked := false
@@ -185,8 +139,6 @@ func (s *Service) Send(ctx context.Context, input SendInput) (model.Message, err
 		}
 
 		if time.Since(readyStart) > 2*time.Second && !poked {
-			s.log.Info("Sessão ainda não pronta, forçando Presence para solicitar chaves",
-				zap.String("instance_id", input.InstanceID))
 			_ = client.SendPresence(ctx, types.PresenceAvailable)
 			poked = true
 		}
@@ -195,15 +147,13 @@ func (s *Service) Send(ctx context.Context, input SendInput) (model.Message, err
 	}
 
 	if !isReady {
-
 		return model.Message{}, fmt.Errorf("sessão indisponível para criptografia, tente novamente em instantes")
 	}
 
-	normalizedTo := normalizeJID(input.To)
-
-	toJID, err := types.ParseJID(normalizedTo)
+	// Resolução inteligente de JID (consultando IsOnWhatsApp para BR)
+	toJID, err := s.resolveJID(ctx, client, input.To)
 	if err != nil {
-		return model.Message{}, fmt.Errorf("%w: %s", ErrInvalidJID, normalizedTo)
+		return model.Message{}, fmt.Errorf("%w: %s", ErrInvalidJID, input.To)
 	}
 
 	var waMessage *waE2E.Message
@@ -299,34 +249,28 @@ func (s *Service) Send(ctx context.Context, input SendInput) (model.Message, err
 		var sidecar []byte
 
 		if isPTT {
-			// Gerar Waveform visualmente agradável (Simétrica e Dinâmica)
+			// Gerar Waveform
 			waveform = make([]byte, 64)
 			for i := 0; i < 64; i++ {
-				// Cria uma curva "natural" (maior no meio, menor nas pontas)
-				// Simula uma fala: começa baixo, aumenta, e termina baixo
 				distFromCenter := math.Abs(float64(i) - 31.5)
-				normalizedDist := distFromCenter / 32.0 // 0.0 (centro) a 1.0 (pontas)
+				normalizedDist := distFromCenter / 32.0
 
-				// Função de envelope: (1 - x^2) dá um arco redondo
 				envelope := 1.0 - (normalizedDist * normalizedDist)
 				if envelope < 0 {
 					envelope = 0
 				}
 
-				// Altura base (0 a 60) + Ruído aleatório (0 a 40)
-				// Isso cria aquele efeito de "barrinhas de voz" variadas
 				baseHeight := envelope * 50.0
 				noise := float64(rand.Intn(40))
 
 				finalVal := baseHeight + noise
 				if finalVal > 255 {
 					finalVal = 255
-				} // Safety check
+				}
 
 				waveform[i] = byte(finalVal)
 			}
 
-			// Sidecar básico (necessário para alguns clientes)
 			sidecar = make([]byte, 16)
 		}
 
@@ -445,4 +389,58 @@ func (s *Service) Send(ctx context.Context, input SendInput) (model.Message, err
 
 func (s *Service) List(ctx context.Context, instanceID string) ([]model.Message, error) {
 	return s.repo.ListByInstance(ctx, instanceID)
+}
+
+// resolveJID tenta resolver o JID correto checando IsOnWhatsApp para números do Brasil
+func (s *Service) resolveJID(ctx context.Context, client *whatsmeow.Client, phone string) (types.JID, error) {
+	phone = strings.TrimSpace(phone)
+
+	if phone == "" {
+		return types.EmptyJID, errors.New("telefone vazio")
+	}
+
+	if strings.Contains(phone, "@g.us") || strings.Contains(phone, "@broadcast") {
+		return types.ParseJID(phone)
+	}
+
+	if !strings.Contains(phone, "@") {
+		phone = strings.Map(func(r rune) rune {
+			if r >= '0' && r <= '9' {
+				return r
+			}
+			return -1
+		}, phone)
+	}
+
+	if strings.Contains(phone, "@s.whatsapp.net") {
+		phone = strings.TrimSuffix(phone, "@s.whatsapp.net")
+	}
+
+	if !strings.HasPrefix(phone, "55") {
+		return types.ParseJID(phone + "@s.whatsapp.net")
+	}
+
+	candidates := []string{phone}
+
+	if len(phone) == 13 {
+		optionWithout9 := phone[:4] + phone[5:]
+		candidates = append(candidates, optionWithout9)
+	} else if len(phone) == 12 {
+		optionWith9 := phone[:4] + "9" + phone[4:]
+		candidates = append(candidates, optionWith9)
+	}
+
+	resp, err := client.IsOnWhatsApp(ctx, candidates)
+	if err != nil {
+		s.log.Warn("falha ao consultar IsOnWhatsApp, enviando original", zap.String("phone", phone), zap.Error(err))
+		return types.ParseJID(phone + "@s.whatsapp.net")
+	}
+
+	for _, item := range resp {
+		if item.JID.User != "" {
+			return item.JID, nil
+		}
+	}
+
+	return types.ParseJID(phone + "@s.whatsapp.net")
 }
