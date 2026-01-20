@@ -173,25 +173,30 @@ func (s *Service) Send(ctx context.Context, input SendInput) (model.Message, err
 		return model.Message{}, ErrInstanceNotConnected
 	}
 
-	// Aguardar sessão ficar pronta (sincronização de chaves E2E)
-	// Timeout de 10 segundos
+
 	readyStart := time.Now()
 	isReady := false
+	poked := false
+
 	for time.Since(readyStart) < 10*time.Second {
 		if s.sessionMgr.IsSessionReady(input.InstanceID) {
 			isReady = true
 			break
 		}
+
+		if time.Since(readyStart) > 2*time.Second && !poked {
+			s.log.Info("Sessão ainda não pronta, forçando Presence para solicitar chaves",
+				zap.String("instance_id", input.InstanceID))
+			_ = client.SendPresence(ctx, types.PresenceAvailable)
+			poked = true
+		}
+
 		time.Sleep(500 * time.Millisecond)
 	}
 
 	if !isReady {
-		// Logar warning mas tentar enviar mesmo assim (melhor que falhar)
-		// Em alguns casos o evento critical_block pode não vir ou vir diferente
-		s.log.Warn("Sessão não reportou pronta após timeout, enviando mensagem mesmo assim",
-			zap.String("instance_id", input.InstanceID),
-			zap.Duration("timeout", 10*time.Second),
-		)
+
+		return model.Message{}, fmt.Errorf("sessão indisponível para criptografia, tente novamente em instantes")
 	}
 
 	normalizedTo := normalizeJID(input.To)

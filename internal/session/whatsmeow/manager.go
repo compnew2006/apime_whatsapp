@@ -371,38 +371,10 @@ func (m *Manager) monitorQRChannel(instanceID string, client *whatsmeow.Client, 
 
 			go m.initHistorySyncCycle(instanceID)
 			if client != nil {
-				go func() {
-					for attempt := 1; attempt <= 5; attempt++ {
-						time.Sleep(time.Duration(attempt*2) * time.Second)
-						if !client.IsLoggedIn() {
-							return
-						}
-						if err := client.SendPresence(context.Background(), types.PresenceAvailable); err != nil {
-							if attempt < 5 {
-								m.log.Debug("aguardando PushName para enviar presence",
-									zap.String("instance_id", instanceID),
-									zap.Int("attempt", attempt),
-								)
-							}
-						} else {
-							m.log.Info("presence enviado com sucesso", zap.String("instance_id", instanceID))
-
-							m.mu.Lock()
-							m.sessionReady[instanceID] = true
-							m.mu.Unlock()
-							m.log.Info("sessão marcada como pronta para mensagens", zap.String("instance_id", instanceID))
-							return
-						}
-					}
-
-					m.mu.Lock()
-					m.sessionReady[instanceID] = true
-					m.mu.Unlock()
-					m.log.Warn("sessão marcada como pronta após falha no presence", zap.String("instance_id", instanceID))
-				}()
 
 				go func() {
 					time.Sleep(10 * time.Second)
+
 					m.mu.RLock()
 					cli, ok := m.clients[instanceID]
 					callback := m.onStatusChange
@@ -429,6 +401,7 @@ func (m *Manager) monitorQRChannel(instanceID string, client *whatsmeow.Client, 
 					}
 				}()
 			}
+
 		}
 	}
 }
@@ -1317,16 +1290,29 @@ func (m *Manager) handleEvent(instanceID string, evt any) {
 						if attempt == 5 {
 							m.log.Debug("PushName não sincronizado no Connected", zap.String("instance_id", instanceID))
 						}
-					} else {
 						m.log.Info("presence enviado - instância totalmente ativa", zap.String("instance_id", instanceID))
 
-						m.mu.Lock()
-						m.sessionReady[instanceID] = true
-						m.mu.Unlock()
+						go func() {
+							m.log.Debug("aguardando critical_block para marcar ready", zap.String("instance_id", instanceID))
+							time.Sleep(5 * time.Second)
+
+							m.mu.RLock()
+							isReady := m.sessionReady[instanceID]
+							m.mu.RUnlock()
+
+							if !isReady {
+								m.mu.Lock()
+								m.sessionReady[instanceID] = true
+								m.mu.Unlock()
+								m.log.Warn("safety timer: sessão marcada como pronta (critical_block demorou > 5s)",
+									zap.String("instance_id", instanceID))
+							}
+						}()
 						return
 					}
 				}
 
+				time.Sleep(5 * time.Second)
 				m.mu.Lock()
 				m.sessionReady[instanceID] = true
 				m.mu.Unlock()
