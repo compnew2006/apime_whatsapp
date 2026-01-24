@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/open-apime/apime/internal/storage/model"
 )
@@ -149,6 +150,9 @@ func (r *messageRepo) GetByWhatsAppID(ctx context.Context, whatsappID string) (m
 		&msg.ID, &msg.InstanceID, &wID, &msg.To, &msg.Type, &payloadBytes, &msg.Status, &msg.DeliveredAt, &msg.CreatedAt,
 	)
 
+	if err == pgx.ErrNoRows {
+		return model.Message{}, ErrNotFound
+	}
 	if err != nil {
 		return model.Message{}, err
 	}

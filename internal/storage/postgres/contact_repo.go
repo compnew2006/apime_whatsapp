@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/open-apime/apime/internal/storage/model"
 )
 
@@ -34,7 +35,7 @@ func (r *contactRepo) GetByPhone(ctx context.Context, phone string) (model.Conta
 
 	var contact model.Contact
 	err := row.Scan(&contact.Phone, &contact.JID, &contact.CreatedAt, &contact.UpdatedAt)
-	if err.Error() == "no rows in result set" || err.Error() == "jackc/pgx/v5: no rows in result set" {
+	if err == pgx.ErrNoRows {
 		return model.Contact{}, ErrNotFound
 	}
 	if err != nil {

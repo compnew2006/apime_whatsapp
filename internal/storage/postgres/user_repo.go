@@ -134,7 +134,7 @@ func (r *userRepo) Delete(ctx context.Context, id string) error {
 	var role string
 	err := r.db.Pool.QueryRow(ctx, `SELECT role FROM users WHERE id = $1`, id).Scan(&role)
 	if err != nil {
-		if err.Error() == "no rows in result set" {
+		if err == pgx.ErrNoRows {
 			return ErrNotFound
 		}
 		return err
