@@ -170,6 +170,58 @@ func (r *messageRepo) GetByWhatsAppID(ctx context.Context, whatsappID string) (m
 	return msg, nil
 }
 
+func (r *messageRepo) GetPendingMessages(ctx context.Context, limit int) ([]model.Message, error) {
+	query := `
+		SELECT id, instance_id, whatsapp_id, recipient, type, payload, status, delivered_at, created_at
+		FROM message_queue
+		WHERE status = 'queued'
+		ORDER BY created_at ASC
+		LIMIT ?
+	`
+
+	rows, err := r.db.Conn.QueryContext(ctx, query, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var messages []model.Message
+	for rows.Next() {
+		var msg model.Message
+		var payloadStr string
+		var createdAt string
+		var whatsappID, deliveredAt sql.NullString
+
+		if err := rows.Scan(
+			&msg.ID, &msg.InstanceID, &whatsappID, &msg.To, &msg.Type, &payloadStr, &msg.Status, &deliveredAt, &createdAt,
+		); err != nil {
+			return nil, err
+		}
+
+		msg.WhatsAppID = whatsappID.String
+		if deliveredAt.Valid {
+			t, _ := time.Parse(time.RFC3339, deliveredAt.String)
+			msg.DeliveredAt = &t
+		}
+
+		var payloadMap map[string]interface{}
+		if err := json.Unmarshal([]byte(payloadStr), &payloadMap); err == nil {
+			if text, ok := payloadMap["text"].(string); ok {
+				msg.Payload = text
+			} else {
+				msg.Payload = payloadStr
+			}
+		} else {
+			msg.Payload = payloadStr
+		}
+
+		msg.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		messages = append(messages, msg)
+	}
+
+	return messages, rows.Err()
+}
+
 func (r *messageRepo) DeleteByInstanceID(ctx context.Context, instanceID string) error {
 	query := `DELETE FROM message_queue WHERE instance_id = ?`
 	_, err := r.db.Conn.ExecContext(ctx, query, instanceID)

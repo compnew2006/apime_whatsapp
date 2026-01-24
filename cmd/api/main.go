@@ -139,7 +139,10 @@ func main() {
 	}
 
 	logr.Debug("inicializando serviços")
-	messageService := message.NewServiceWithSession(repos.Message, sessionManager, repos.Instance, repos.Contact, logr)
+	messageService := message.NewServiceWithSession(repos.Message, sessionManager, repos.Instance, repos.Contact, repos.OutboxQueue, logr)
+	outboxWorker := message.NewOutboxWorker(messageService, repos.OutboxQueue, logr, cfg.App.OutboxWorkers)
+	outboxWorker.Start(context.Background())
+	logr.Info("outbox worker iniciado", zap.Int("workers", cfg.App.OutboxWorkers))
 	apiTokenService := api_token.NewService(repos.APIToken)
 	userService := user.NewService(repos.User, apiTokenService, instanceService)
 	authService := auth.NewService(cfg.JWT.Secret, cfg.JWT.ExpHours, repos.User)
@@ -235,6 +238,9 @@ func main() {
 
 	webhookPool.Stop()
 	logr.Info("webhook pool encerrada")
+
+	outboxWorker.Stop()
+	logr.Info("outbox worker encerrado")
 
 	if repos.RedisClient != nil {
 		if err := repos.RedisClient.Close(); err != nil {

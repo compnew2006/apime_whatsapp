@@ -28,9 +28,10 @@ type StorageConfig struct {
 }
 
 type AppConfig struct {
-	Env     string `env:"APP_ENV" envDefault:"development"`
-	Port    string `env:"PORT" envDefault:"8080"`
-	BaseURL string `env:"APP_BASE_URL" envDefault:"http://localhost:8080"`
+	Env           string `env:"APP_ENV" envDefault:"development"`
+	Port          string `env:"PORT" envDefault:"8080"`
+	BaseURL       string `env:"APP_BASE_URL" envDefault:"http://localhost:8080"`
+	OutboxWorkers int    `env:"OUTBOX_WORKERS" envDefault:"5"`
 }
 
 type DatabaseConfig struct {
@@ -93,7 +94,7 @@ type WebhookConfig struct {
 }
 
 type DashboardConfig struct {
-	Enabled bool `env:"DASHBOARD_ENABLED" envDefault:"true"`
+	Enabled  bool   `env:"DASHBOARD_ENABLED" envDefault:"true"`
 	Timezone string `env:"DASHBOARD_TIMEZONE" envDefault:""`
 }
 

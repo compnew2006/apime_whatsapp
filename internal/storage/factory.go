@@ -26,6 +26,7 @@ type Repositories struct {
 	Contact      ContactRepository
 	RedisClient  *storage_redis.Client
 	WebhookQueue queue.Queue
+	OutboxQueue  queue.Queue
 	RateLimiter  ratelimiter.Limiter
 }
 
@@ -36,6 +37,7 @@ func NewRepositories(cfg config.Config, log *zap.Logger) (*Repositories, error) 
 
 	var (
 		webhookQueue queue.Queue
+		outboxQueue  queue.Queue
 		rateLimiter  ratelimiter.Limiter
 		storeRedis   *storage_redis.Client
 		err          error
@@ -54,11 +56,13 @@ func NewRepositories(cfg config.Config, log *zap.Logger) (*Repositories, error) 
 
 		redisClient := storeRedis.RDB()
 		webhookQueue = queue_redis.NewQueue(redisClient, "webhook:events")
+		outboxQueue = queue_redis.NewQueue(redisClient, "message:outbox")
 		rateLimiter = limiter_redis.NewLimiter(redisClient)
-		log.Info("Redis conectado, fila e limiter configurados")
+		log.Info("Redis conectado, filas e limiter configurados")
 	} else {
-		log.Info("usando implementações em memória (Redis desabilitado)")
+		log.Info("usando implementações em memória")
 		webhookQueue = queue_memory.NewQueue(10000)
+		outboxQueue = queue_memory.NewQueue(10000)
 		rateLimiter = limiter_memory.NewLimiter()
 		storeRedis = nil
 	}
@@ -84,6 +88,7 @@ func NewRepositories(cfg config.Config, log *zap.Logger) (*Repositories, error) 
 			Contact:      sqlite.NewContactRepository(db),
 			RedisClient:  storeRedis,
 			WebhookQueue: webhookQueue,
+			OutboxQueue:  outboxQueue,
 			RateLimiter:  rateLimiter,
 		}, nil
 
@@ -107,6 +112,7 @@ func NewRepositories(cfg config.Config, log *zap.Logger) (*Repositories, error) 
 			Contact:      postgres.NewContactRepository(db),
 			RedisClient:  storeRedis,
 			WebhookQueue: webhookQueue,
+			OutboxQueue:  outboxQueue,
 			RateLimiter:  rateLimiter,
 		}, nil
 

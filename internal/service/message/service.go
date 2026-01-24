@@ -17,9 +17,11 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
 
+	"sync"
+
+	"github.com/open-apime/apime/internal/pkg/queue"
 	"github.com/open-apime/apime/internal/storage"
 	"github.com/open-apime/apime/internal/storage/model"
-	"sync"
 )
 
 var (
@@ -43,6 +45,7 @@ type Service struct {
 	sessionMgr   SessionManager
 	instanceRepo storage.InstanceRepository
 	contactRepo  storage.ContactRepository
+	queue        queue.Queue
 	log          *zap.Logger
 }
 
@@ -53,19 +56,21 @@ type SessionManager interface {
 	GetPreKeyCount(instanceID string) (int, error)
 }
 
-func NewService(repo storage.MessageRepository, log *zap.Logger) *Service {
+func NewService(repo storage.MessageRepository, q queue.Queue, log *zap.Logger) *Service {
 	return &Service{
-		repo: repo,
-		log:  log,
+		repo:  repo,
+		queue: q,
+		log:   log,
 	}
 }
 
-func NewServiceWithSession(repo storage.MessageRepository, sessionMgr SessionManager, instanceRepo storage.InstanceRepository, contactRepo storage.ContactRepository, log *zap.Logger) *Service {
+func NewServiceWithSession(repo storage.MessageRepository, sessionMgr SessionManager, instanceRepo storage.InstanceRepository, contactRepo storage.ContactRepository, q queue.Queue, log *zap.Logger) *Service {
 	return &Service{
 		repo:         repo,
 		sessionMgr:   sessionMgr,
 		instanceRepo: instanceRepo,
 		contactRepo:  contactRepo,
+		queue:        q,
 		log:          log,
 	}
 }
@@ -89,7 +94,31 @@ func (s *Service) Enqueue(ctx context.Context, input EnqueueInput) (model.Messag
 		Payload:    input.Payload,
 		Status:     "queued",
 	}
-	return s.repo.Create(ctx, message)
+	msg, err := s.repo.Create(ctx, message)
+	if err != nil {
+		return msg, err
+	}
+
+	// Enfileirar para processamento assíncrono
+	if s.queue != nil {
+		event := queue.Event{
+			ID:         msg.ID,
+			InstanceID: msg.InstanceID,
+			Type:       msg.Type,
+			Payload: map[string]interface{}{
+				"to":   msg.To,
+				"text": msg.Payload,
+			},
+			CreatedAt: msg.CreatedAt,
+		}
+		if err := s.queue.Enqueue(ctx, event); err != nil {
+			s.log.Error("erro ao enfileirar mensagem para o worker", zap.Error(err))
+			// Não retornamos erro aqui pois a mensagem já está salva no banco (status queued)
+			// e o detector de stuck ou polling eventual pode recuperá-la.
+		}
+	}
+
+	return msg, nil
 }
 
 type SendInput struct {
@@ -103,6 +132,7 @@ type SendInput struct {
 	FileName   string
 	Seconds    int
 	PTT        bool
+	MessageID  string
 }
 
 func (s *Service) Send(ctx context.Context, input SendInput) (model.Message, error) {
@@ -389,18 +419,36 @@ func (s *Service) Send(ctx context.Context, input SendInput) (model.Message, err
 		return model.Message{}, fmt.Errorf("%w: %s", ErrUnsupportedMediaType, input.Type)
 	}
 
-	message := model.Message{
-		ID:         uuid.NewString(),
-		InstanceID: input.InstanceID,
-		To:         input.To,
-		Type:       messageType,
-		Payload:    payload,
-		Status:     "sending",
-	}
+	var msg model.Message
+	if input.MessageID != "" {
+		msg.ID = input.MessageID
+		msg.InstanceID = input.InstanceID
+		msg.To = input.To
+		msg.Type = messageType
+		msg.Payload = payload
+		msg.Status = "sending"
 
-	msg, err := s.repo.Create(ctx, message)
-	if err != nil {
-		return model.Message{}, fmt.Errorf("erro ao salvar mensagem: %w", err)
+		if err := s.repo.Update(ctx, msg); err != nil {
+			s.log.Warn("erro ao atualizar status da mensagem existente, tentando criar nova", zap.Error(err))
+			msg, err = s.repo.Create(ctx, msg)
+			if err != nil {
+				return model.Message{}, fmt.Errorf("erro ao salvar mensagem: %w", err)
+			}
+		}
+	} else {
+		// Fluxo síncrono original
+		message := model.Message{
+			ID:         uuid.NewString(),
+			InstanceID: input.InstanceID,
+			To:         input.To,
+			Type:       messageType,
+			Payload:    payload,
+			Status:     "sending",
+		}
+		msg, err = s.repo.Create(ctx, message)
+		if err != nil {
+			return model.Message{}, fmt.Errorf("erro ao salvar mensagem: %w", err)
+		}
 	}
 
 	var resp whatsmeow.SendResponse
@@ -434,6 +482,13 @@ func (s *Service) Send(ctx context.Context, input SendInput) (model.Message, err
 			zap.Int("attempt", attempt),
 			zap.Error(err),
 			zap.String("to", toJID.String()))
+
+		if strings.Contains(err.Error(), "untrusted identity") {
+			s.log.Warn("erro de identidade não confiável detectado, limpando identidade e tentando novamente",
+				zap.String("to", toJID.String()))
+			client.Store.Identities.DeleteIdentity(toJID.SignalAddress().String())
+			continue
+		}
 
 		if strings.Contains(err.Error(), "not logged in") {
 			break

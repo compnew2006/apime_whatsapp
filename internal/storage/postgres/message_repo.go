@@ -171,6 +171,53 @@ func (r *messageRepo) GetByWhatsAppID(ctx context.Context, whatsappID string) (m
 	return msg, nil
 }
 
+func (r *messageRepo) GetPendingMessages(ctx context.Context, limit int) ([]model.Message, error) {
+	query := `
+		SELECT id, instance_id, whatsapp_id, recipient, type, payload, status, delivered_at, created_at
+		FROM message_queue
+		WHERE status = 'queued'
+		ORDER BY created_at ASC
+		LIMIT $1
+	`
+
+	rows, err := r.db.Pool.Query(ctx, query, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var messages []model.Message
+	for rows.Next() {
+		var msg model.Message
+		var payloadBytes []byte
+		var whatsappID *string
+		if err := rows.Scan(
+			&msg.ID, &msg.InstanceID, &whatsappID, &msg.To, &msg.Type, &payloadBytes, &msg.Status, &msg.DeliveredAt, &msg.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+
+		if whatsappID != nil {
+			msg.WhatsAppID = *whatsappID
+		}
+
+		var payloadMap map[string]interface{}
+		if err := json.Unmarshal(payloadBytes, &payloadMap); err == nil {
+			if text, ok := payloadMap["text"].(string); ok {
+				msg.Payload = text
+			} else {
+				msg.Payload = string(payloadBytes)
+			}
+		} else {
+			msg.Payload = string(payloadBytes)
+		}
+
+		messages = append(messages, msg)
+	}
+
+	return messages, rows.Err()
+}
+
 func (r *messageRepo) DeleteByInstanceID(ctx context.Context, instanceID string) error {
 	query := `DELETE FROM message_queue WHERE instance_id = $1`
 	_, err := r.db.Pool.Exec(ctx, query, instanceID)
