@@ -132,6 +132,11 @@ POST /groups
 Body: { "name": "Nome", "participants": ["JID1", "JID2"] }
 ```
 
+### Obter Informações do Grupo
+```
+GET /groups/{group}
+```
+
 ### Sair do Grupo
 ```
 POST /groups/{group}/leave
