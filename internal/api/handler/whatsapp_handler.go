@@ -57,6 +57,7 @@ func (h *WhatsAppHandler) Register(r *gin.RouterGroup) {
 	r.POST("/instances/:id/whatsapp/newsletters/:jid/mark-viewed", h.newsletterMarkViewed)
 	r.POST("/instances/:id/whatsapp/newsletters/:jid/reaction", h.newsletterSendReaction)
 	r.POST("/instances/:id/whatsapp/newsletters/:jid/message-updates", h.getNewsletterMessageUpdates)
+	r.GET("/instances/:id/whatsapp/groups", h.listGroups)
 	r.GET("/instances/:id/whatsapp/groups/:group", h.getGroupInfo)
 	r.POST("/instances/:id/whatsapp/upload", h.uploadMedia)
 }
@@ -1269,4 +1270,25 @@ func (h *WhatsAppHandler) setPrivacySetting(c *gin.Context) {
 		return
 	}
 	response.Success(c, http.StatusOK, settings)
+}
+
+func (h *WhatsAppHandler) listGroups(c *gin.Context) {
+	instanceID, ok := h.requireInstanceToken(c)
+	if !ok {
+		return
+	}
+
+	client, err := h.sessionManager.GetClient(instanceID)
+	if err != nil {
+		response.ErrorWithMessage(c, http.StatusBadRequest, "instância não conectada")
+		return
+	}
+
+	groups, err := client.GetJoinedGroups(c.Request.Context())
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, err)
+		return
+	}
+
+	response.Success(c, http.StatusOK, groups)
 }

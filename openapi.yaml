@@ -404,6 +404,40 @@ paths:
         "200":
           description: Status e JID da instância
 
+  /instances/{id}/whatsapp/groups:
+    get:
+      summary: Listar grupos que a instância faz parte
+      tags: [WhatsApp]
+      security: [{bearerAuth: []}, {instanceToken: []}]
+      parameters:
+        - $ref: "#/components/parameters/instanceId"
+      responses:
+        "200":
+          description: Lista de grupos
+    post:
+      summary: Criar grupo
+      tags: [WhatsApp]
+      security: [{bearerAuth: []}, {instanceToken: []}]
+      parameters:
+        - $ref: "#/components/parameters/instanceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                participants:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        "200":
+          description: Grupo criado
+
   /instances/{id}/messages:
     get:
       summary: Listar mensagens enviadas
