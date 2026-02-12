@@ -49,17 +49,19 @@ func NewServiceWithSessionMessagesAndEventLogs(repo storage.InstanceRepository, 
 }
 
 type CreateInput struct {
-	Name          string
-	WebhookURL    string
-	WebhookSecret string
-	OwnerUserID   string
+	Name           string
+	WebhookURL     string
+	WebhookSecret  string
+	MetaCompatible bool
+	OwnerUserID    string
 }
 
 type UpdateInput struct {
-	Name          string
-	WebhookURL    string
-	WebhookSecret string
-	OwnerUserID   string
+	Name           string
+	WebhookURL     string
+	WebhookSecret  string
+	MetaCompatible bool
+	OwnerUserID    string
 }
 
 func (s *Service) Create(ctx context.Context, input CreateInput) (model.Instance, error) {
@@ -81,6 +83,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (model.Instance
 		OwnerUserID:    input.OwnerUserID,
 		WebhookURL:     strings.TrimSpace(input.WebhookURL),
 		WebhookSecret:  strings.TrimSpace(input.WebhookSecret),
+		MetaCompatible: input.MetaCompatible,
 		TokenHash:      hash,
 		TokenUpdatedAt: &now,
 		Status:         model.InstanceStatusPending,
@@ -135,6 +138,7 @@ func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (mod
 	inst.Name = strings.TrimSpace(input.Name)
 	inst.WebhookURL = strings.TrimSpace(input.WebhookURL)
 	inst.WebhookSecret = strings.TrimSpace(input.WebhookSecret)
+	inst.MetaCompatible = input.MetaCompatible
 	return s.repo.Update(ctx, inst)
 }
 
@@ -157,6 +161,7 @@ func (s *Service) UpdateByUser(ctx context.Context, id string, input UpdateInput
 	inst.Name = strings.TrimSpace(input.Name)
 	inst.WebhookURL = strings.TrimSpace(input.WebhookURL)
 	inst.WebhookSecret = strings.TrimSpace(input.WebhookSecret)
+	inst.MetaCompatible = input.MetaCompatible
 	return s.repo.Update(ctx, inst)
 }
 

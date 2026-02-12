@@ -53,15 +53,17 @@ func (h *InstanceHandler) Register(r *gin.RouterGroup) {
 }
 
 type createInstanceRequest struct {
-	Name          string `json:"name" binding:"required,min=2"`
-	WebhookURL    string `json:"webhook_url"`
-	WebhookSecret string `json:"webhook_secret"`
+	Name           string `json:"name" binding:"required,min=2"`
+	WebhookURL     string `json:"webhook_url"`
+	WebhookSecret  string `json:"webhook_secret"`
+	MetaCompatible bool   `json:"meta_compatible"`
 }
 
 type updateInstanceRequest struct {
-	Name          string `json:"name" binding:"required,min=2"`
-	WebhookURL    string `json:"webhook_url"`
-	WebhookSecret string `json:"webhook_secret"`
+	Name           string `json:"name" binding:"required,min=2"`
+	WebhookURL     string `json:"webhook_url"`
+	WebhookSecret  string `json:"webhook_secret"`
+	MetaCompatible bool   `json:"meta_compatible"`
 }
 
 func (h *InstanceHandler) create(c *gin.Context) {
@@ -78,10 +80,11 @@ func (h *InstanceHandler) create(c *gin.Context) {
 	userID := c.GetString("userID")
 
 	instance, err := h.service.Create(c.Request.Context(), instanceSvc.CreateInput{
-		Name:          req.Name,
-		WebhookURL:    req.WebhookURL,
-		WebhookSecret: req.WebhookSecret,
-		OwnerUserID:   userID,
+		Name:           req.Name,
+		WebhookURL:     req.WebhookURL,
+		WebhookSecret:  req.WebhookSecret,
+		MetaCompatible: req.MetaCompatible,
+		OwnerUserID:    userID,
 	})
 	if err != nil {
 		response.Error(c, http.StatusBadRequest, err)
@@ -143,10 +146,11 @@ func (h *InstanceHandler) update(c *gin.Context) {
 	userRole := c.GetString("userRole")
 
 	inst, err := h.service.UpdateByUser(c.Request.Context(), id, instanceSvc.UpdateInput{
-		Name:          req.Name,
-		WebhookURL:    req.WebhookURL,
-		WebhookSecret: req.WebhookSecret,
-		OwnerUserID:   userRole, // Passamos o role para verificação de permissão
+		Name:           req.Name,
+		WebhookURL:     req.WebhookURL,
+		WebhookSecret:  req.WebhookSecret,
+		MetaCompatible: req.MetaCompatible,
+		OwnerUserID:    userRole, // Passamos o role para verificação de permissão
 	})
 	if err != nil {
 		response.Error(c, http.StatusBadRequest, err)
