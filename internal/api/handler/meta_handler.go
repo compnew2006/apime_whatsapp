@@ -9,19 +9,57 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/open-apime/apime/internal/pkg/response"
+	instanceSvc "github.com/open-apime/apime/internal/service/instance"
 	messageSvc "github.com/open-apime/apime/internal/service/message"
 )
 
 type MetaHandler struct {
-	service *messageSvc.Service
+	service         *messageSvc.Service
+	instanceService *instanceSvc.Service
 }
 
-func NewMetaHandler(service *messageSvc.Service) *MetaHandler {
-	return &MetaHandler{service: service}
+func NewMetaHandler(service *messageSvc.Service, instanceService *instanceSvc.Service) *MetaHandler {
+	return &MetaHandler{
+		service:         service,
+		instanceService: instanceService,
+	}
 }
 
 func (h *MetaHandler) Register(r *gin.RouterGroup) {
+	// Rotas diretas (compatibilidade simples)
+	r.GET("/meta/:id", h.getPhoneNumber)
 	r.POST("/meta/:id/messages", h.sendMessage)
+
+	// Rotas com versionamento (compatibilidade Meta Cloud API)
+	// Ex: /v16.0/PHONE_ID/messages
+	r.GET("/meta/:version/:id", h.getPhoneNumber)
+	r.POST("/meta/:version/:id/messages", h.sendMessage)
+}
+
+func (h *MetaHandler) getPhoneNumber(c *gin.Context) {
+	instanceID := c.Param("id")
+	// Verificar token se necessário
+	if c.GetString("authType") == "instance_token" {
+		if c.GetString("instanceID") != instanceID {
+			response.ErrorWithMessage(c, http.StatusForbidden, "token inválido para esta instância")
+			return
+		}
+	}
+
+	inst, err := h.instanceService.Get(c.Request.Context(), instanceID)
+	if err != nil {
+		response.ErrorWithMessage(c, http.StatusNotFound, "instância não encontrada")
+		return
+	}
+
+	// Formato da resposta Meta Get Phone Number
+	c.JSON(http.StatusOK, gin.H{
+		"verified_name":            inst.Name,
+		"code_verification_status": "VERIFIED",
+		"display_phone_number":     inst.WhatsAppJID, // JID cru ou formatado
+		"quality_rating":           "GREEN",
+		"id":                       inst.ID,
+	})
 }
 
 // MetaRequest representa a estrutura de envio de mensagem da Cloud API

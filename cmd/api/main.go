@@ -159,7 +159,7 @@ func main() {
 
 	instanceHandler := handler.NewInstanceHandlerWithSession(instanceService, logr, sessionManager)
 	messageHandler := handler.NewMessageHandler(messageService)
-	metaHandler := handler.NewMetaHandler(messageService)
+	metaHandler := handler.NewMetaHandler(messageService, instanceService)
 	whatsAppHandler := handler.NewWhatsAppHandler(sessionManager)
 	authHandler := handler.NewAuthHandler(authService)
 	apiTokenHandler := handler.NewAPITokenHandler(apiTokenService)
