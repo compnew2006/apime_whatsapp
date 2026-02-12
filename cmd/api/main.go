@@ -22,6 +22,7 @@ import (
 	device_config "github.com/open-apime/apime/internal/service/device_config"
 	"github.com/open-apime/apime/internal/service/instance"
 	"github.com/open-apime/apime/internal/service/message"
+	"github.com/open-apime/apime/internal/service/template"
 	"github.com/open-apime/apime/internal/service/user"
 	"github.com/open-apime/apime/internal/session/whatsmeow"
 	whatsmeow_session "github.com/open-apime/apime/internal/session/whatsmeow"
@@ -155,11 +156,12 @@ func main() {
 	userService := user.NewService(repos.User, apiTokenService, instanceService)
 	authService := auth.NewService(cfg.JWT.Secret, cfg.JWT.ExpHours, repos.User)
 	deviceConfigService := device_config.NewService(repos.DeviceConfig)
+	templateService := template.NewService(repos.Template)
 	logr.Debug("serviços inicializados")
 
 	instanceHandler := handler.NewInstanceHandlerWithSession(instanceService, logr, sessionManager)
 	messageHandler := handler.NewMessageHandler(messageService)
-	metaHandler := handler.NewMetaHandler(messageService, instanceService)
+	metaHandler := handler.NewMetaHandler(messageService, instanceService, templateService)
 	whatsAppHandler := handler.NewWhatsAppHandler(sessionManager)
 	authHandler := handler.NewAuthHandler(authService)
 	apiTokenHandler := handler.NewAPITokenHandler(apiTokenService)

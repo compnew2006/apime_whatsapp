@@ -24,6 +24,7 @@ type Repositories struct {
 	DeviceConfig DeviceConfigRepository
 	HistorySync  HistorySyncRepository
 	Contact      ContactRepository
+	Template     TemplateRepository
 	RedisClient  *storage_redis.Client
 	WebhookQueue queue.Queue
 	OutboxQueue  queue.Queue
@@ -86,6 +87,7 @@ func NewRepositories(cfg config.Config, log *zap.Logger) (*Repositories, error) 
 			DeviceConfig: sqlite.NewDeviceConfigRepository(db),
 			HistorySync:  sqlite.NewHistorySyncRepository(db),
 			Contact:      sqlite.NewContactRepository(db),
+			Template:     sqlite.NewTemplateRepository(db),
 			RedisClient:  storeRedis,
 			WebhookQueue: webhookQueue,
 			OutboxQueue:  outboxQueue,
@@ -110,6 +112,7 @@ func NewRepositories(cfg config.Config, log *zap.Logger) (*Repositories, error) 
 			DeviceConfig: postgres.NewDeviceConfigRepository(db),
 			HistorySync:  postgres.NewHistorySyncRepository(db),
 			Contact:      postgres.NewContactRepository(db),
+			Template:     postgres.NewTemplateRepository(db),
 			RedisClient:  storeRedis,
 			WebhookQueue: webhookQueue,
 			OutboxQueue:  outboxQueue,
