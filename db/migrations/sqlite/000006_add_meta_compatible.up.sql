@@ -1,0 +1,1 @@
+ALTER TABLE instances ADD COLUMN meta_compatible BOOLEAN NOT NULL DEFAULT 0;

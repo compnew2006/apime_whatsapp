@@ -44,6 +44,14 @@ func (a *instanceCheckerAdapter) HasWebhook(ctx context.Context, instanceID stri
 	return inst.WebhookURL != ""
 }
 
+func (a *instanceCheckerAdapter) IsMetaCompatible(ctx context.Context, instanceID string) bool {
+	inst, err := a.repo.GetByID(ctx, instanceID)
+	if err != nil {
+		return false
+	}
+	return inst.MetaCompatible
+}
+
 func main() {
 	cfg := config.Load()
 
@@ -151,6 +159,7 @@ func main() {
 
 	instanceHandler := handler.NewInstanceHandlerWithSession(instanceService, logr, sessionManager)
 	messageHandler := handler.NewMessageHandler(messageService)
+	metaHandler := handler.NewMetaHandler(messageService)
 	whatsAppHandler := handler.NewWhatsAppHandler(sessionManager)
 	authHandler := handler.NewAuthHandler(authService)
 	apiTokenHandler := handler.NewAPITokenHandler(apiTokenService)
@@ -172,6 +181,7 @@ func main() {
 		HTMLTemplate:    dashboard.HTMLTemplate(),
 		InstanceHandler: instanceHandler,
 		MessageHandler:  messageHandler,
+		MetaHandler:     metaHandler,
 		WhatsAppHandler: whatsAppHandler,
 		AuthHandler:     authHandler,
 		APITokenHandler: apiTokenHandler,

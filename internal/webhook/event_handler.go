@@ -20,6 +20,7 @@ import (
 
 type InstanceChecker interface {
 	HasWebhook(ctx context.Context, instanceID string) bool
+	IsMetaCompatible(ctx context.Context, instanceID string) bool
 }
 
 type EventHandler struct {
@@ -72,17 +73,25 @@ func (h *EventHandler) Handle(ctx context.Context, instanceID string, instanceJI
 		}
 	}
 
-	normalized := h.normalizeEvent(ctx, instanceID, client, evt)
+	var eventType string
+	var payload map[string]interface{}
 
-	if instanceJID != "" {
-		normalized["instanceJID"] = instanceJID
+	if h.instanceChecker.IsMetaCompatible(ctx, instanceID) {
+		payload = h.normalizeEventToMeta(ctx, instanceID, instanceJID, client, evt)
+		eventType = "meta_event"
+	} else {
+		payload = h.normalizeEvent(ctx, instanceID, client, evt)
+		if instanceJID != "" {
+			payload["instanceJID"] = instanceJID
+		}
+		eventType = payload["type"].(string)
 	}
 
 	event := queue.Event{
 		ID:         h.generateEventID(),
 		InstanceID: instanceID,
-		Type:       normalized["type"].(string),
-		Payload:    normalized,
+		Type:       eventType,
+		Payload:    payload,
 		CreatedAt:  time.Now(),
 	}
 
@@ -331,4 +340,157 @@ func (h *EventHandler) downloadAndSaveMedia(ctx context.Context, instanceID stri
 // generateEventID gera um ID único para o evento.
 func (h *EventHandler) generateEventID() string {
 	return uuid.New().String()
+}
+
+func (h *EventHandler) normalizeEventToMeta(ctx context.Context, instanceID string, instanceJID string, client *whatsmeow.Client, evt any) map[string]interface{} {
+	// Estrutura básica do Meta Cloud API Webhook
+	value := map[string]interface{}{
+		"messaging_product": "whatsapp",
+		"metadata": map[string]string{
+			"display_phone_number": strings.Split(instanceJID, "@")[0],
+			"phone_number_id":      instanceID,
+		},
+	}
+
+	switch evt := evt.(type) {
+	case *events.Message:
+		// Extrair remetente
+		senderJID := evt.Info.Sender.String()
+		if strings.Contains(senderJID, "@lid") && !evt.Info.SenderAlt.IsEmpty() {
+			senderJID = evt.Info.SenderAlt.String()
+		}
+		from := strings.Split(senderJID, "@")[0]
+
+		// Contatos
+		value["contacts"] = []map[string]interface{}{
+			{
+				"profile": map[string]string{
+					"name": evt.Info.PushName,
+				},
+				"wa_id": from,
+			},
+		}
+
+		// Mensagem
+		message := map[string]interface{}{
+			"from":      from,
+			"id":        evt.Info.ID,
+			"timestamp": fmt.Sprintf("%d", evt.Info.Timestamp.Unix()),
+		}
+
+		if evt.Message.GetConversation() != "" {
+			message["type"] = "text"
+			message["text"] = map[string]string{
+				"body": evt.Message.GetConversation(),
+			}
+		} else if extText := evt.Message.GetExtendedTextMessage(); extText != nil {
+			message["type"] = "text"
+			message["text"] = map[string]string{
+				"body": extText.GetText(),
+			}
+		} else if img := evt.Message.GetImageMessage(); img != nil {
+			message["type"] = "image"
+			mediaBody := map[string]interface{}{
+				"mime_type": img.GetMimetype(),
+				"caption":   img.GetCaption(),
+			}
+			// Baixar mídia localmente
+			if client != nil && h.mediaStorage != nil {
+				if mediaURL := h.downloadAndSaveMedia(ctx, instanceID, evt.Info.ID, client, img, img.GetMimetype()); mediaURL != "" {
+					mediaBody["link"] = mediaURL
+				}
+			}
+			message["image"] = mediaBody
+		} else if vid := evt.Message.GetVideoMessage(); vid != nil {
+			message["type"] = "video"
+			mediaBody := map[string]interface{}{
+				"mime_type": vid.GetMimetype(),
+				"caption":   vid.GetCaption(),
+			}
+			if client != nil && h.mediaStorage != nil {
+				if mediaURL := h.downloadAndSaveMedia(ctx, instanceID, evt.Info.ID, client, vid, vid.GetMimetype()); mediaURL != "" {
+					mediaBody["link"] = mediaURL
+				}
+			}
+			message["video"] = mediaBody
+		} else if aud := evt.Message.GetAudioMessage(); aud != nil {
+			message["type"] = "audio"
+			if aud.GetPTT() {
+				message["type"] = "voice" // Meta diferencia audio/voice? Geralmente é 'audio' com 'voice' bool, mas a estrutura muda
+			}
+			mediaBody := map[string]interface{}{
+				"mime_type": aud.GetMimetype(),
+			}
+			if client != nil && h.mediaStorage != nil {
+				if mediaURL := h.downloadAndSaveMedia(ctx, instanceID, evt.Info.ID, client, aud, aud.GetMimetype()); mediaURL != "" {
+					mediaBody["link"] = mediaURL
+				}
+			}
+			message["audio"] = mediaBody
+		} else if doc := evt.Message.GetDocumentMessage(); doc != nil {
+			message["type"] = "document"
+			mediaBody := map[string]interface{}{
+				"mime_type": doc.GetMimetype(),
+				"caption":   doc.GetCaption(),
+				"filename":  doc.GetTitle(),
+			}
+			if client != nil && h.mediaStorage != nil {
+				if mediaURL := h.downloadAndSaveMedia(ctx, instanceID, evt.Info.ID, client, doc, doc.GetMimetype()); mediaURL != "" {
+					mediaBody["link"] = mediaURL
+				}
+			}
+			message["document"] = mediaBody
+		} else {
+			message["type"] = "unknown"
+		}
+
+		value["messages"] = []interface{}{message}
+
+	case *events.Receipt:
+		status := "sent"
+		switch evt.Type {
+		case types.ReceiptTypeDelivered:
+			status = "delivered"
+		case types.ReceiptTypeRead:
+			status = "read"
+		}
+
+		statuses := []interface{}{}
+		for _, msgID := range evt.MessageIDs {
+			statuses = append(statuses, map[string]interface{}{
+				"id":        msgID,
+				"status":    status,
+				"timestamp": fmt.Sprintf("%d", evt.Timestamp.Unix()),
+				"recipient_id": func() string {
+					if !evt.MessageSender.IsEmpty() {
+						return strings.Split(evt.MessageSender.String(), "@")[0]
+					}
+					return strings.Split(evt.Chat.String(), "@")[0]
+				}(),
+			})
+		}
+		value["statuses"] = statuses
+
+	default:
+		// Eventos não mapeados, retorna vazio ou estrutura custom
+		return nil
+	}
+
+	// Envelopar no formato root do Meta
+	root := map[string]interface{}{
+		"object": "whatsapp_business_account",
+		"entry": []interface{}{
+			map[string]interface{}{
+				"id": instanceID, // Account ID placeholder
+				"changes": []interface{}{
+					map[string]interface{}{
+						"value": value,
+						"field": "messages",
+					},
+				},
+			},
+		},
+	}
+
+	return root
 }

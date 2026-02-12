@@ -30,14 +30,15 @@ func (r *instanceRepo) Create(ctx context.Context, inst model.Instance) (model.I
 	}
 
 	query := `
-		INSERT INTO instances (id, name, owner_user_id, whatsapp_jid, status, session_blob, webhook_url, webhook_secret, instance_token_hash, instance_token_updated_at, history_sync_status, history_sync_cycle_id, history_sync_updated_at, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO instances (id, name, owner_user_id, whatsapp_jid, status, session_blob, webhook_url, webhook_secret, instance_token_hash, instance_token_updated_at, history_sync_status, history_sync_cycle_id, history_sync_updated_at, meta_compatible, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err := r.db.Conn.ExecContext(ctx, query,
 		inst.ID, inst.Name, inst.OwnerUserID, nullIfEmpty(inst.WhatsAppJID), string(inst.Status), inst.SessionBlob,
 		nullIfEmpty(inst.WebhookURL), nullIfEmpty(inst.WebhookSecret), nullIfEmpty(inst.TokenHash),
 		formatTimePtr(inst.TokenUpdatedAt), string(inst.HistorySyncStatus), nullIfEmpty(inst.HistorySyncCycleID), formatTimePtr(inst.HistorySyncUpdatedAt),
+		inst.MetaCompatible,
 		inst.CreatedAt.Format(time.RFC3339), inst.UpdatedAt.Format(time.RFC3339),
 	)
 
@@ -51,7 +52,7 @@ func (r *instanceRepo) Create(ctx context.Context, inst model.Instance) (model.I
 func (r *instanceRepo) GetByTokenHash(ctx context.Context, tokenHash string) (model.Instance, error) {
 	query := `
 		SELECT id, name, owner_user_id, COALESCE(whatsapp_jid, ''), status, session_blob, COALESCE(webhook_url, ''), COALESCE(webhook_secret, ''), COALESCE(instance_token_hash, ''), instance_token_updated_at,
-		       history_sync_status, COALESCE(history_sync_cycle_id, ''), history_sync_updated_at, created_at, updated_at
+		       history_sync_status, COALESCE(history_sync_cycle_id, ''), history_sync_updated_at, meta_compatible, created_at, updated_at
 		FROM instances
 		WHERE instance_token_hash = ?
 	`
@@ -63,7 +64,7 @@ func (r *instanceRepo) GetByTokenHash(ctx context.Context, tokenHash string) (mo
 	err := r.db.Conn.QueryRowContext(ctx, query, tokenHash).Scan(
 		&inst.ID, &inst.Name, &inst.OwnerUserID, &inst.WhatsAppJID, &inst.Status, &inst.SessionBlob,
 		&inst.WebhookURL, &inst.WebhookSecret, &inst.TokenHash, &tokenUpdatedAt,
-		&inst.HistorySyncStatus, &inst.HistorySyncCycleID, &historySyncUpdatedAt,
+		&inst.HistorySyncStatus, &inst.HistorySyncCycleID, &historySyncUpdatedAt, &inst.MetaCompatible,
 		&createdAt, &updatedAt,
 	)
 	if err != nil {
@@ -81,7 +82,7 @@ func (r *instanceRepo) GetByTokenHash(ctx context.Context, tokenHash string) (mo
 func (r *instanceRepo) GetByID(ctx context.Context, id string) (model.Instance, error) {
 	query := `
 		SELECT id, name, owner_user_id, COALESCE(whatsapp_jid, ''), status, session_blob, COALESCE(webhook_url, ''), COALESCE(webhook_secret, ''), COALESCE(instance_token_hash, ''), instance_token_updated_at,
-		       history_sync_status, COALESCE(history_sync_cycle_id, ''), history_sync_updated_at, created_at, updated_at
+		       history_sync_status, COALESCE(history_sync_cycle_id, ''), history_sync_updated_at, meta_compatible, created_at, updated_at
 		FROM instances
 		WHERE id = ?
 	`
@@ -93,7 +94,7 @@ func (r *instanceRepo) GetByID(ctx context.Context, id string) (model.Instance, 
 	err := r.db.Conn.QueryRowContext(ctx, query, id).Scan(
 		&inst.ID, &inst.Name, &inst.OwnerUserID, &inst.WhatsAppJID, &inst.Status, &inst.SessionBlob,
 		&inst.WebhookURL, &inst.WebhookSecret, &inst.TokenHash, &tokenUpdatedAt,
-		&inst.HistorySyncStatus, &inst.HistorySyncCycleID, &historySyncUpdatedAt,
+		&inst.HistorySyncStatus, &inst.HistorySyncCycleID, &historySyncUpdatedAt, &inst.MetaCompatible,
 		&createdAt, &updatedAt,
 	)
 	if err != nil {
@@ -111,7 +112,7 @@ func (r *instanceRepo) GetByID(ctx context.Context, id string) (model.Instance, 
 func (r *instanceRepo) List(ctx context.Context) ([]model.Instance, error) {
 	query := `
 		SELECT i.id, i.name, i.owner_user_id, COALESCE(u.email, ''), COALESCE(i.whatsapp_jid, ''), i.status, COALESCE(i.webhook_url, ''), COALESCE(i.webhook_secret, ''), COALESCE(i.instance_token_hash, ''), i.instance_token_updated_at,
-		       i.history_sync_status, COALESCE(i.history_sync_cycle_id, ''), i.history_sync_updated_at, i.created_at, i.updated_at
+		       i.history_sync_status, COALESCE(i.history_sync_cycle_id, ''), i.history_sync_updated_at, i.meta_compatible, i.created_at, i.updated_at
 		FROM instances i
 		LEFT JOIN users u ON i.owner_user_id = u.id
 		ORDER BY i.created_at DESC
@@ -132,7 +133,7 @@ func (r *instanceRepo) List(ctx context.Context) ([]model.Instance, error) {
 		if err := rows.Scan(
 			&inst.ID, &inst.Name, &inst.OwnerUserID, &inst.OwnerEmail, &inst.WhatsAppJID, &inst.Status,
 			&inst.WebhookURL, &inst.WebhookSecret, &inst.TokenHash, &tokenUpdatedAt,
-			&inst.HistorySyncStatus, &inst.HistorySyncCycleID, &historySyncUpdatedAt,
+			&inst.HistorySyncStatus, &inst.HistorySyncCycleID, &historySyncUpdatedAt, &inst.MetaCompatible,
 			&createdAt, &updatedAt,
 		); err != nil {
 			return nil, err
@@ -152,7 +153,7 @@ func (r *instanceRepo) List(ctx context.Context) ([]model.Instance, error) {
 func (r *instanceRepo) ListByOwner(ctx context.Context, ownerUserID string) ([]model.Instance, error) {
 	query := `
 		SELECT i.id, i.name, i.owner_user_id, COALESCE(u.email, ''), COALESCE(i.whatsapp_jid, ''), i.status, COALESCE(i.webhook_url, ''), COALESCE(i.webhook_secret, ''), COALESCE(i.instance_token_hash, ''), i.instance_token_updated_at,
-		       i.history_sync_status, COALESCE(i.history_sync_cycle_id, ''), i.history_sync_updated_at, i.created_at, i.updated_at
+		       i.history_sync_status, COALESCE(i.history_sync_cycle_id, ''), i.history_sync_updated_at, i.meta_compatible, i.created_at, i.updated_at
 		FROM instances i
 		LEFT JOIN users u ON i.owner_user_id = u.id
 		WHERE i.owner_user_id = ?
@@ -174,7 +175,7 @@ func (r *instanceRepo) ListByOwner(ctx context.Context, ownerUserID string) ([]m
 		if err := rows.Scan(
 			&inst.ID, &inst.Name, &inst.OwnerUserID, &inst.OwnerEmail, &inst.WhatsAppJID, &inst.Status,
 			&inst.WebhookURL, &inst.WebhookSecret, &inst.TokenHash, &tokenUpdatedAt,
-			&inst.HistorySyncStatus, &inst.HistorySyncCycleID, &historySyncUpdatedAt,
+			&inst.HistorySyncStatus, &inst.HistorySyncCycleID, &historySyncUpdatedAt, &inst.MetaCompatible,
 			&createdAt, &updatedAt,
 		); err != nil {
 			return nil, err
@@ -197,7 +198,7 @@ func (r *instanceRepo) Update(ctx context.Context, inst model.Instance) (model.I
 	query := `
 		UPDATE instances
 		SET name = ?, owner_user_id = ?, whatsapp_jid = ?, status = ?, session_blob = ?, webhook_url = ?, webhook_secret = ?, instance_token_hash = ?, instance_token_updated_at = ?,
-		    history_sync_status = ?, history_sync_cycle_id = ?, history_sync_updated_at = ?, updated_at = ?
+		    history_sync_status = ?, history_sync_cycle_id = ?, history_sync_updated_at = ?, meta_compatible = ?, updated_at = ?
 		WHERE id = ?
 	`
 
@@ -205,6 +206,7 @@ func (r *instanceRepo) Update(ctx context.Context, inst model.Instance) (model.I
 		inst.Name, inst.OwnerUserID, nullIfEmpty(inst.WhatsAppJID), string(inst.Status), inst.SessionBlob,
 		nullIfEmpty(inst.WebhookURL), nullIfEmpty(inst.WebhookSecret), nullIfEmpty(inst.TokenHash),
 		formatTimePtr(inst.TokenUpdatedAt), string(inst.HistorySyncStatus), nullIfEmpty(inst.HistorySyncCycleID), formatTimePtr(inst.HistorySyncUpdatedAt),
+		inst.MetaCompatible,
 		inst.UpdatedAt.Format(time.RFC3339), inst.ID,
 	)
 	if err != nil {

@@ -20,6 +20,7 @@ type Options struct {
 	HTMLTemplate    *template.Template
 	InstanceHandler *handler.InstanceHandler
 	MessageHandler  *handler.MessageHandler
+	MetaHandler     *handler.MetaHandler
 	WhatsAppHandler *handler.WhatsAppHandler
 	AuthHandler     *handler.AuthHandler
 	APITokenHandler *handler.APITokenHandler
@@ -83,6 +84,9 @@ func NewRouter(opts Options) *gin.Engine {
 
 	opts.InstanceHandler.Register(protected)
 	opts.MessageHandler.Register(protected)
+	if opts.MetaHandler != nil {
+		opts.MetaHandler.Register(protected)
+	}
 	if opts.WhatsAppHandler != nil {
 		opts.WhatsAppHandler.Register(protected)
 	}

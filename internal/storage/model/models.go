@@ -26,6 +26,7 @@ type Instance struct {
 	HistorySyncStatus    HistorySyncStatus `json:"historySyncStatus"`
 	HistorySyncCycleID   string            `json:"historySyncCycleId"`
 	HistorySyncUpdatedAt *time.Time        `json:"historySyncUpdatedAt,omitempty"`
+	MetaCompatible       bool              `json:"metaCompatible"`
 	CreatedAt            time.Time         `json:"createdAt"`
 	UpdatedAt            time.Time         `json:"updatedAt"`
 }
