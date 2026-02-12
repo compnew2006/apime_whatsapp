@@ -1,5 +1,20 @@
 # Changelog
 
+## [v1.1.0] - 2026-02-21
+### Added
+- **Meta Cloud API Compatibility**:
+  - New `MetaHandler` providing endpoints mimicking the Meta Cloud API structure (`/api/meta/:version/...`).
+  - Support for `POST /messages` with `text`, `image`, `video`, `audio`, `document`, and `template` types.
+  - Support for `GET /phone_numbers`, `GET /business_profile`.
+  - Media management endpoints: `POST /media` (upload) and `GET /media/:id` (retrieval).
+  - Template management endpoints: `GET`, `POST`, `DELETE` `/message_templates`.
+  - Webhooks now transformed to Meta format when `meta_compatible` flag is enabled on instance.
+
+### Changed
+- **Instance Model**: Added `MetaCompatible` boolean flag.
+- **Database**: Added migration for `meta_compatible` column and `templates` table.
+- **Architecture**: `MetaHandler` now has access to `InstanceService`, `TemplateService`, and `MediaStorage`.
+
 ## [v1.0.9] - 2026-01-21
 ### Adicionado
 - **Resolução inteligente de JIDs brasileiros**: os endpoints de envio de mensagens agora aceitam números "crus". O service consulta `IsOnWhatsApp` para decidir automaticamente se precisa inserir ou remover o nono dígito em números `+55`, reduzindo rejeições por formato incorreto (@internal/service/message/service.go#390-446, @internal/api/handler/message_handler.go#87-176).

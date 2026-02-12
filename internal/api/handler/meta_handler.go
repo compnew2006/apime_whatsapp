@@ -9,23 +9,31 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"crypto/sha256"
+	"encoding/base64"
+	"fmt"
+
+	"github.com/google/uuid"
 	"github.com/open-apime/apime/internal/pkg/response"
 	instanceSvc "github.com/open-apime/apime/internal/service/instance"
 	messageSvc "github.com/open-apime/apime/internal/service/message"
 	templateSvc "github.com/open-apime/apime/internal/service/template"
+	"github.com/open-apime/apime/internal/storage/media"
 )
 
 type MetaHandler struct {
 	service         *messageSvc.Service
 	instanceService *instanceSvc.Service
 	templateService *templateSvc.Service
+	mediaStorage    *media.Storage
 }
 
-func NewMetaHandler(service *messageSvc.Service, instanceService *instanceSvc.Service, templateService *templateSvc.Service) *MetaHandler {
+func NewMetaHandler(service *messageSvc.Service, instanceService *instanceSvc.Service, templateService *templateSvc.Service, mediaStorage *media.Storage) *MetaHandler {
 	return &MetaHandler{
 		service:         service,
 		instanceService: instanceService,
 		templateService: templateService,
+		mediaStorage:    mediaStorage,
 	}
 }
 
@@ -123,8 +131,16 @@ func (h *MetaHandler) subscribeApp(c *gin.Context) {
 }
 
 func (h *MetaHandler) uploadMedia(c *gin.Context) {
-	// instanceID := c.Param("id") // Unused for now
+	instanceID := c.Param("id")
 	// Validação de token já feita pelo middleware
+
+	// Verificar permissão
+	if c.GetString("authType") == "instance_token" {
+		if c.GetString("instanceID") != instanceID {
+			response.ErrorWithMessage(c, http.StatusForbidden, "token inválido para esta instância")
+			return
+		}
+	}
 
 	file, err := c.FormFile("file")
 	if err != nil {
@@ -139,40 +155,94 @@ func (h *MetaHandler) uploadMedia(c *gin.Context) {
 	}
 	defer src.Close()
 
-	// fileData, err := io.ReadAll(src) // Unused for now
-	// if err != nil {
-	// 	response.ErrorWithMessage(c, http.StatusInternalServerError, "erro ao ler arquivo")
-	// 	return
-	// }
+	fileData, err := io.ReadAll(src)
+	if err != nil {
+		response.ErrorWithMessage(c, http.StatusInternalServerError, "erro ao ler arquivo")
+		return
+	}
 
-	// Salvar usando o serviço de mensagem (que tem acesso ao media storage ou usar media handler?)
-	// Como messageService não expõe SaveMedia publicamente de forma direta, vamos assumir que
-	// precisamos injetar mediaStorage ou adicionar método ao messageService.
-	// Por simplicidade, vamos usar o messageService.Send media flow mas sem enviar? Não.
-	// Melhor: Adicionar `UploadMedia` ao messageService ou injetar `MediaHandler` aqui.
-	// O plano original não mencionou injetar mediaStorage. Vamos assumir que podemos adicionar ao Service
-	// ou por hora, retornar erro de implementação se não tiver acesso.
-	// Mas espere, MetaHandler tem `service *messageSvc.Service`.
-	// Vamos adicionar UploadMedia ao messageService no próximo passo se necessário,
-	// mas o plano diz "saves to mediaStorage".
-	// Para este passo, vamos mockar o ID retornado se não tivermos acesso direto ao storage,
-	// mas o ideal é implementar.
-	// Vamos usar um placeholder ID por enquanto e implementar a lógica real se injetarmos o storage.
-	// Como não temos mediaStorage no struct, vamos adicionar.
+	// Usar um ID temporário para o "messageID" já que não há mensagem associada ainda
+	tempID := uuid.NewString()
+	contentType := file.Header.Get("Content-Type")
 
-	// TODO: Implementar salvamento real. Por enquanto, retornamos um ID fictício base64(instanceID:random)
-	// Para funcionar com Whatomate, ele tenta baixar depois.
-	// Precisamos do MediaStorage no MetaHandler.
+	mediaID, err := h.mediaStorage.Save(c.Request.Context(), instanceID, tempID, fileData, contentType)
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, err)
+		return
+	}
 
-	// Vamos retornar erro 501 por enquanto e corrigir na injeção de dependência.
-	response.ErrorWithMessage(c, http.StatusNotImplemented, "upload de mídia não configurado (falta injeção de storage)")
+	// Codificar ID combinado (instanceID:mediaID)
+	combined := fmt.Sprintf("%s:%s", instanceID, mediaID)
+	metaMediaID := base64.StdEncoding.EncodeToString([]byte(combined))
+
+	c.JSON(http.StatusOK, gin.H{
+		"id": metaMediaID,
+	})
 }
 
 func (h *MetaHandler) getMedia(c *gin.Context) {
-	// mediaID := c.Param("media_id")
-	// Decodificar ID -> instanceID:realMediaID
-	// Retornar metadados
-	response.ErrorWithMessage(c, http.StatusNotImplemented, "get media não implementado")
+	metaMediaID := c.Param("media_id")
+
+	decodedBytes, err := base64.StdEncoding.DecodeString(metaMediaID)
+	if err != nil {
+		response.ErrorWithMessage(c, http.StatusBadRequest, "ID de mídia inválido")
+		return
+	}
+
+	parts := splitID(string(decodedBytes))
+	if len(parts) != 2 {
+		response.ErrorWithMessage(c, http.StatusBadRequest, "ID de mídia malformado")
+		return
+	}
+
+	instanceID := parts[0]
+	mediaID := parts[1]
+
+	// Verificar se mídia existe
+	if !h.mediaStorage.Exists(instanceID, mediaID) {
+		response.ErrorWithMessage(c, http.StatusNotFound, "mídia não encontrada")
+		return
+	}
+
+	data, err := h.mediaStorage.Get(c.Request.Context(), instanceID, mediaID)
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, err)
+		return
+	}
+
+	// Calcular hash SHA256
+	hash := sha256.Sum256(data)
+	sha256Hex := fmt.Sprintf("%x", hash)
+
+	// Construir URL pública (assumindo rota /api/media do MediaHandler)
+	// Host deve vir do request ou config
+	host := c.Request.Host
+	scheme := "http"
+	if c.Request.TLS != nil {
+		scheme = "https"
+	}
+	// Se estiver atrás de proxy, confiar no header X-Forwarded-Proto/Host se configurado,
+	// mas por padrão Go/Gin usa Request.Host.
+	publicURL := fmt.Sprintf("%s://%s/api/media/%s/%s", scheme, host, instanceID, mediaID)
+
+	c.JSON(http.StatusOK, gin.H{
+		"url":               publicURL,
+		"mime_type":         http.DetectContentType(data), // Ou salvar/recuperar mime real se storage suportasse getMetadata
+		"sha256":            sha256Hex,
+		"file_size":         len(data),
+		"id":                metaMediaID,
+		"messaging_product": "whatsapp",
+	})
+}
+
+func splitID(s string) []string {
+	// Simple split by first colon
+	for i := 0; i < len(s); i++ {
+		if s[i] == ':' {
+			return []string{s[:i], s[i+1:]}
+		}
+	}
+	return []string{s}
 }
 
 func (h *MetaHandler) getBusinessProfile(c *gin.Context) {
